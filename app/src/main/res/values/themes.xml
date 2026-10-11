@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Base application theme.
+
+  Deliberately does NOT reference a Material Components XML theme: the entire UI is
+  Jetpack Compose + Material 3, so the only XML theme we need is the window shell that
+  paints before the first Compose frame. Using android:Theme.Material.Light.NoActionBar
+  keeps the project free of an extra com.google.android.material dependency.
+
+  android:windowBackground matches the app's dark top bar so cold start does not flash
+  a bright surface before Compose draws.
+-->
+<resources>
+
+    <style name="Theme.RootExplorerPro" parent="android:Theme.Material.Light.NoActionBar">
+        <item name="android:windowBackground">@color/window_background</item>
+        <item name="android:statusBarColor">@color/status_bar</item>
+        <item name="android:navigationBarColor">@color/navigation_bar</item>
+        <item name="android:windowLightStatusBar">false</item>
+    </style>
+
+</resources>

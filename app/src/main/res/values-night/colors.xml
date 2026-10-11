@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Dark-mode window/shell colors. -->
+<resources>
+    <color name="window_background">#FF15171A</color>
+    <color name="status_bar">#FF1B1E23</color>
+    <color name="navigation_bar">#FF15171A</color>
+    <color name="icon_background">#FF23272E</color>
+</resources>

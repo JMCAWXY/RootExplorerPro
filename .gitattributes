@@ -1,0 +1,15 @@
+# Normalise line endings in the repository.
+#
+# Gradle wrapper scripts must stay LF or the shell cannot run them on
+# Linux/macOS; Windows batch files must stay CRLF.
+* text=auto eol=lf
+*.bat text eol=crlf
+gradlew text eol=lf
+gradlew.bat text eol=crlf
+
+# Binary assets — never touch line endings here.
+*.jar binary
+*.apk binary
+*.png binary
+*.webp binary
+*.ttf binary

@@ -1,0 +1,34 @@
+# Build output
+build/
+app/build/
+.gradle/
+.kotlin/
+
+# Local toolchain and caches created on this machine (not part of the project).
+# The Gradle *wrapper* (gradlew, gradlew.bat, gradle/wrapper/) IS committed on purpose.
+.toolchain/
+.gradle-home/
+.gradle-tmp/
+.android-home/
+
+# Machine-specific SDK location
+local.properties
+
+# IDE
+.idea/
+*.iml
+*.hprof
+captures/
+
+# OS
+Thumbs.db
+.DS_Store
+
+# Local development artifacts (device screenshots taken during verification,
+# ad-hoc temp files used while bootstrapping the toolchain).
+.screenshots/
+.toolchain-cache/
+.tmp-*
+
+# Agent workspace metadata
+.workbuddy/

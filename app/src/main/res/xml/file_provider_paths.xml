@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Paths this app may expose through its FileProvider.
+
+  The "root" entry exposes only the app's own private directory tree; the shared-storage
+  entry lets us share documents the user picked from public storage. We deliberately do
+  not map "/" so the provider can never hand out an arbitrary root-filesystem path.
+-->
+<paths>
+    <files-path
+        name="internal_files"
+        path="." />
+    <cache-path
+        name="internal_cache"
+        path="." />
+    <external-files-path
+        name="external_files"
+        path="." />
+    <external-cache-path
+        name="external_cache"
+        path="." />
+    <external-path
+        name="shared_storage"
+        path="." />
+</paths>

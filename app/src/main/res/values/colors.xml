@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Light-mode window/shell colors (referenced by res/values/themes.xml only). -->
+<resources>
+    <color name="window_background">#FFF4F5F7</color>
+    <color name="status_bar">#FF2B2F36</color>
+    <color name="navigation_bar">#FFF4F5F7</color>
+    <color name="icon_background">#FFECEEF1</color>
+</resources>
