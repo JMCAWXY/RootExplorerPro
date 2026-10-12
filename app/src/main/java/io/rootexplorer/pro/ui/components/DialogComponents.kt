@@ -254,7 +254,7 @@ private fun ActionRow(
  */
 @Composable
 fun PermissionEditorDialog(
-    entry: FileEntry,
+    entries: List<FileEntry>,
     hasRoot: Boolean,
     onDismiss: () -> Unit,
     onRequestRoot: () -> Unit,
@@ -262,15 +262,20 @@ fun PermissionEditorDialog(
     onEditOwner: () -> Unit,
     busy: Boolean = false,
 ) {
-    var permission by remember(entry.path) {
-        mutableStateOf(entry.permission ?: LinuxPermission.fromOctal("644")!!)
+    // One permission set is edited and then applied to the whole selection, so the dialog seeds
+    // from the first entry and keys its state on the selection's paths: opening it for a different
+    // group must re-seed rather than keep the previous group's values.
+    val primary = entries.first()
+    val seedKey = entries.joinToString("|") { it.path }
+    var permission by remember(seedKey) {
+        mutableStateOf(primary.permission ?: LinuxPermission.fromOctal("644")!!)
     }
     // Seeded and kept in sync with the four-digit form, which is what actually gets applied.
     // The three-digit `octalSimple` masks setuid/setgid/sticky, so seeding with it meant opening
     // this dialog on a 4755 file showed "755" and accepting that text silently cleared the bits.
-    var octalText by remember(entry.path) { mutableStateOf(permission.octal) }
-    var octalError by remember(entry.path) { mutableStateOf<String?>(null) }
-    var recursive by remember(entry.path) { mutableStateOf(false) }
+    var octalText by remember(seedKey) { mutableStateOf(permission.octal) }
+    var octalError by remember(seedKey) { mutableStateOf<String?>(null) }
+    var recursive by remember(seedKey) { mutableStateOf(false) }
 
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -278,7 +283,11 @@ fun PermissionEditorDialog(
         text = {
             Column(modifier = Modifier.heightIn(max = 480.dp).verticalScroll(rememberScrollState())) {
                 Text(
-                    text = entry.path,
+                    text = if (entries.size == 1) {
+                        primary.path
+                    } else {
+                        "已选择 ${entries.size} 项：权限会逐项应用并回读校验"
+                    },
                     style = MonospaceTextStyle,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     maxLines = 2,
@@ -317,7 +326,7 @@ fun PermissionEditorDialog(
                     modifier = Modifier.fillMaxWidth(),
                 )
 
-                if (entry.isDirectory) {
+                if (entries.any { it.isDirectory }) {
                     Spacer(Modifier.height(8.dp))
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Checkbox(checked = recursive, onCheckedChange = { recursive = it })
@@ -433,7 +442,7 @@ fun TextInputDialog(
  */
 @Composable
 fun DeleteConfirmDialog(
-    entry: FileEntry,
+    entries: List<FileEntry>,
     /** True when the trash is on a different volume, where a move would be a slow copy. */
     trashCrossVolume: Boolean = false,
     onDismiss: () -> Unit,
@@ -442,23 +451,46 @@ fun DeleteConfirmDialog(
 ) {
     var recursive by remember { mutableStateOf(false) }
     var permanentArmed by remember { mutableStateOf(false) }
-    val needsRecursive = entry.isDirectory
+    // A batch needs the recursive switch as soon as *any* member is a directory: `rm -f` alone
+    // cannot remove a non-empty one, so without the switch that entry would simply fail.
+    val needsRecursive = entries.any { it.isDirectory }
+    val single = entries.singleOrNull()
 
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("删除", style = MaterialTheme.typography.titleSmall) },
+        title = {
+            Text(
+                text = if (single == null) "删除 ${entries.size} 项" else "删除",
+                style = MaterialTheme.typography.titleSmall,
+            )
+        },
         text = {
             Column {
-                Text(
-                    text = "目标：${entry.name}",
-                    style = MaterialTheme.typography.bodyMedium,
-                    fontWeight = FontWeight.Medium,
-                )
-                Text(
-                    text = entry.path,
-                    style = MonospaceTextStyle,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
+                if (single != null) {
+                    Text(
+                        text = "目标：${single.name}",
+                        style = MaterialTheme.typography.bodyMedium,
+                        fontWeight = FontWeight.Medium,
+                    )
+                    Text(
+                        text = single.path,
+                        style = MonospaceTextStyle,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                } else {
+                    Text(
+                        text = "目标：${entries.size} 项",
+                        style = MaterialTheme.typography.bodyMedium,
+                        fontWeight = FontWeight.Medium,
+                    )
+                    Text(
+                        text = entries.take(6).joinToString("\n") { it.name } +
+                            if (entries.size > 6) "\n…另有 ${entries.size - 6} 项" else "",
+                        style = MonospaceTextStyle,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = 7,
+                    )
+                }
                 Spacer(Modifier.height(10.dp))
 
                 Text(
@@ -496,20 +528,41 @@ fun DeleteConfirmDialog(
                         )
                     }
                     Text(
-                        text = "不勾选时只能删除空目录。",
+                        text = if (recursive) {
+                            "将连同目录内的全部内容一起删除，不可恢复。"
+                        } else {
+                            "不勾选时只能删除空目录，右下角的「永久删除」也点不动。"
+                        },
                         style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        color = if (recursive) {
+                            FileManagerTheme.colors.danger
+                        } else {
+                            MaterialTheme.colorScheme.onSurfaceVariant
+                        },
                     )
                 }
             }
         },
         confirmButton = {
             if (permanentArmed) {
+                // A directory cannot be removed without the recursive switch, so the button is
+                // disabled until it is ticked. Its label colour has to follow that: painting it the
+                // danger colour unconditionally made a dead button look live, and tapping it did
+                // nothing — which reads as "delete is broken" rather than "this needs the switch".
+                // ActionRow, above, already uses exactly this rule.
+                val permanentEnabled = !needsRecursive || recursive
                 TextButton(
                     onClick = { onPermanentDelete(recursive) },
-                    enabled = !needsRecursive || recursive,
+                    enabled = permanentEnabled,
                 ) {
-                    Text("永久删除", color = FileManagerTheme.colors.danger)
+                    Text(
+                        text = "永久删除",
+                        color = if (permanentEnabled) {
+                            FileManagerTheme.colors.danger
+                        } else {
+                            MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f)
+                        },
+                    )
                 }
             } else {
                 TextButton(onClick = onTrash) {

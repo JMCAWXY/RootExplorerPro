@@ -383,6 +383,49 @@ class FileOperationPlanTest {
         assertEquals("NEW", File(destination, "collide (1).txt").readText())
     }
 
+    @Test
+    fun `cancelling after answering one conflict stops the whole operation`() {
+        // Two colliding sources: the first conflict is answered, the second is cancelled.
+        // ConflictDecision.CancelOperation is documented as "Stop the whole operation", so
+        // nothing may be transferred — including the first conflict, whose answer arrived
+        // before the cancel. Previously the engine only broke out of the prompt loop and then
+        // ran the transfer anyway, so "cancel" copied everything it could and reported the
+        // rest as failures.
+        val sourceA = file("a.txt", 4).apply { writeText("NEW-A") }
+        val sourceB = file("b.txt", 4).apply { writeText("NEW-B") }
+        val destination = dir("dest")
+        val existingA = File(destination, "a.txt").apply { writeText("OLD-A") }
+        val existingB = File(destination, "b.txt").apply { writeText("OLD-B") }
+
+        var asked = 0
+        val outcome = engine().runBlockingExecute(
+            sources = listOf(sourceA.absolutePath, sourceB.absolutePath),
+            destination = destination.absolutePath,
+            move = false,
+            policy = ConflictPolicy.ASK,
+            resolver = { _ ->
+                asked++
+                if (asked == 1) {
+                    ConflictDecision.Apply(ConflictPolicy.OVERWRITE)
+                } else {
+                    ConflictDecision.CancelOperation
+                }
+            },
+        )
+
+        assertEquals(2, asked)
+        assertTrue(
+            "cancel must be reported as a cancellation, not a completion: $outcome",
+            outcome is OperationOutcome.Cancelled,
+        )
+        // Neither destination was touched: the answer given for the first conflict was
+        // discarded along with the operation.
+        assertEquals("OLD-A", existingA.readText())
+        assertEquals("OLD-B", existingB.readText())
+        // And no renamed sibling was written either.
+        assertEquals(2, destination.listFiles()?.size ?: -1)
+    }
+
     // ------------------------------------------------------------------ extras
 
     @Test

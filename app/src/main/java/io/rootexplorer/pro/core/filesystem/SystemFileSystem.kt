@@ -163,6 +163,18 @@ class SystemFileSystem(
      */
     suspend fun requestRoot(force: Boolean = false): RootStatus = rootAccess.probe(force)
 
+    /**
+     * Re-establish a root grant the user gave in an earlier run, silently.
+     *
+     * Returns null when there is nothing to restore, which is the case on a device that has never
+     * granted root. This is the only probe that may run without a user action, and it is safe
+     * precisely because it does nothing in that case — see [RootAccess.restoreIfPreviouslyGranted].
+     *
+     * Called from the browser's launch path so a killed app comes back with root already working
+     * instead of asking the user to authorise again.
+     */
+    suspend fun restorePreviousRoot(): RootStatus? = rootAccess.restoreIfPreviouslyGranted()
+
     /** Paths that are, on every normal Android build, unreadable without root. */
     private fun isTypicallyRootOnly(path: String): Boolean {
         val normalised = FsEngine.normalise(path)

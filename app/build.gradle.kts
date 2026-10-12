@@ -22,8 +22,8 @@ android {
         applicationId = "io.rootexplorer.pro"
         minSdk = 26
         targetSdk = 36
-        versionCode = 4
-        versionName = "0.4.0-P3"
+        versionCode = 5
+        versionName = "0.5.0"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables.useSupportLibrary = true
@@ -56,7 +56,10 @@ android {
 
     buildFeatures {
         compose = true
-        buildConfig = false
+        // BuildConfig.VERSION_NAME is what the drawer's version label reads. It used to be a
+        // hard-coded string that had already gone stale (the UI advertised "0.1.0-P0" while the
+        // build was "0.4.0-P3"), so the label now comes from the one place that cannot drift.
+        buildConfig = true
         aidl = false
         renderScript = false
         shaders = false

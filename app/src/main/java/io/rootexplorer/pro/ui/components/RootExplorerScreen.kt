@@ -39,10 +39,15 @@ import io.rootexplorer.pro.core.filesystem.FileEntry
 import io.rootexplorer.pro.core.filesystem.FileFilter
 import io.rootexplorer.pro.core.filesystem.FileSortField
 import io.rootexplorer.pro.core.permissions.LinuxPermission
+import io.rootexplorer.pro.core.script.ScriptEnvironment
+import io.rootexplorer.pro.core.script.ScriptOutcome
 import io.rootexplorer.pro.feature.filebrowser.FileBrowserUiState
 import io.rootexplorer.pro.feature.filebrowser.PaneId
 import io.rootexplorer.pro.feature.permissioneditor.OwnerGroupEditorDialog
 import io.rootexplorer.pro.feature.properties.PropertiesDialog
+import io.rootexplorer.pro.feature.script.ScriptActionDialog
+import io.rootexplorer.pro.open.OpenableKind
+import io.rootexplorer.pro.open.openableKind
 import io.rootexplorer.pro.ui.theme.FileManagerTheme
 
 /**
@@ -55,7 +60,8 @@ private sealed interface ScreenDialog {
     data object None : ScreenDialog
     data class Actions(val entry: FileEntry) : ScreenDialog
     data class Properties(val entry: FileEntry) : ScreenDialog
-    data class PermissionEditor(val entry: FileEntry) : ScreenDialog
+    /** The permission editor. One permission set is edited, then applied to every entry. */
+    data class PermissionEditor(val entries: List<FileEntry>) : ScreenDialog
     data class OwnerGroup(val entry: FileEntry) : ScreenDialog
 
     /**
@@ -65,20 +71,24 @@ private sealed interface ScreenDialog {
      * order in which dialogs are dismissed.
      */
     data class ConfirmSensitive(
-        val entry: FileEntry,
+        /** The paths the change would affect; the dialog names the one, or counts many. */
+        val paths: List<String>,
         val warning: io.rootexplorer.pro.core.permissions.SensitivePath,
         val proceed: () -> Unit,
     ) : ScreenDialog
     data object CreateFolder : ScreenDialog
     data object CreateFile : ScreenDialog
     data class Rename(val entry: FileEntry) : ScreenDialog
-    data class ConfirmDelete(val entry: FileEntry) : ScreenDialog
+    data class ConfirmDelete(val entries: List<FileEntry>) : ScreenDialog
     data object SortMenu : ScreenDialog
     data object FilterMenu : ScreenDialog
     data object PathInput : ScreenDialog
     data object MoreMenu : ScreenDialog
     data class PathDetail(val path: String) : ScreenDialog
     data class FullPath(val path: String) : ScreenDialog
+
+    /** The run/edit dialog for a shell script. */
+    data class ScriptAction(val entry: FileEntry) : ScreenDialog
 }
 
 /**
@@ -96,6 +106,10 @@ fun RootExplorerScreen(
     onClearSelection: (PaneId) -> Unit,
     onSelectAll: (PaneId) -> Unit,
     onInvertSelection: (PaneId) -> Unit,
+    /** A leftward sweep has begun in this pane. */
+    onBeginSweep: (PaneId) -> Unit,
+    /** The rows a leftward sweep currently covers in this pane. */
+    onSweep: (PaneId, List<FileEntry>) -> Unit,
     onSetActivePane: (PaneId) -> Unit,
     onSwapPanes: () -> Unit,
     onToggleDualPane: () -> Unit,
@@ -117,6 +131,8 @@ fun RootExplorerScreen(
     onCreateFile: (String) -> Unit,
     onRename: (FileEntry, String) -> Unit,
     onDelete: (FileEntry, Boolean) -> Unit,
+    /** Permanently delete several entries at once, as chosen by a sweep. */
+    onDeleteEntries: (List<FileEntry>, Boolean) -> Unit,
     onCopySelection: () -> Unit,
     onMoveSelection: () -> Unit,
     onLoadStat: suspend (String) -> io.rootexplorer.pro.core.filesystem.StatResult,
@@ -130,11 +146,15 @@ fun RootExplorerScreen(
     onOpenSearch: () -> Unit,
     onOpenHash: (FileEntry) -> Unit,
     onOpenEditor: (FileEntry) -> Unit,
+    /** Runs a script the user asked to run; suspends until it finishes. */
+    onRunScript: suspend (FileEntry, ScriptEnvironment, Boolean) -> ScriptOutcome,
     onOpenCompress: (List<String>) -> Unit,
     onOpenExtract: (FileEntry) -> Unit,
     onOpenApps: () -> Unit,
     onOpenTerminal: () -> Unit,
     onChangePermissions: (FileEntry, LinuxPermission, Boolean) -> Unit,
+    /** Apply one permission set to several entries, each verified by re-reading it. */
+    onChangePermissionsForSelection: (List<FileEntry>, LinuxPermission, Boolean) -> Unit,
     onChangeOwnership: (FileEntry, String, String?, Boolean) -> Unit,
     onValidateOwnerSpec: (String) -> String?,
     onResolveUid: suspend (String) -> Int?,
@@ -148,6 +168,16 @@ fun RootExplorerScreen(
     val context = LocalContext.current
     var dialog by remember { mutableStateOf<ScreenDialog>(ScreenDialog.None) }
     var drawerOpen by remember { mutableStateOf(false) }
+
+    // A shell script opens the run dialog rather than being handed on: running it is what it is
+    // usually for, and that dialog also offers 编辑 for the times it is not.
+    val openOrRun: (PaneId, FileEntry) -> Unit = { pane, entry ->
+        if (openableKind(entry) == OpenableKind.SCRIPT) {
+            dialog = ScreenDialog.ScriptAction(entry)
+        } else {
+            onOpenEntry(pane, entry)
+        }
+    }
 
     // The drawer's own state is the source of truth for the animation; `drawerOpen` mirrors
     // it so the hamburger button and a swipe-to-close stay in sync.
@@ -258,26 +288,26 @@ fun RootExplorerScreen(
                             pane = state.left,
                             focused = state.activePane == PaneId.LEFT,
                             showPathHeader = true,
+                            // Every interaction with this pane makes it the active one, so the
+                            // toolbar and the bottom bar always act on the pane being used.
+                            onActivate = { onSetActivePane(PaneId.LEFT) },
                             onEntryClick = { entry ->
-                                onSetActivePane(PaneId.LEFT)
                                 if (state.left.isSelectionMode) {
                                     onToggleSelection(PaneId.LEFT, entry)
                                 } else {
-                                    onOpenEntry(PaneId.LEFT, entry)
+                                    openOrRun(PaneId.LEFT, entry)
                                 }
                             },
-                            onEntryOpen = { entry -> onOpenEntry(PaneId.LEFT, entry) },
+                            onEntryOpen = { entry -> openOrRun(PaneId.LEFT, entry) },
                             onEntryLongClick = { entry ->
-                                onSetActivePane(PaneId.LEFT)
                                 onToggleSelection(PaneId.LEFT, entry)
                                 dialog = ScreenDialog.Actions(entry)
                             },
-                            onPathClick = {
-                                onSetActivePane(PaneId.LEFT)
-                                dialog = ScreenDialog.PathInput
-                            },
+                            onPathClick = { dialog = ScreenDialog.PathInput },
                             onRetry = { onRefresh(PaneId.LEFT) },
                             onGoUp = { onUp(PaneId.LEFT) },
+                            onSweepStart = { onBeginSweep(PaneId.LEFT) },
+                            onSweep = { entries -> onSweep(PaneId.LEFT, entries) },
                             modifier = Modifier
                                 .weight(1f)
                                 .fillMaxSize(),
@@ -292,26 +322,24 @@ fun RootExplorerScreen(
                             pane = state.right,
                             focused = state.activePane == PaneId.RIGHT,
                             showPathHeader = true,
+                            onActivate = { onSetActivePane(PaneId.RIGHT) },
                             onEntryClick = { entry ->
-                                onSetActivePane(PaneId.RIGHT)
                                 if (state.right.isSelectionMode) {
                                     onToggleSelection(PaneId.RIGHT, entry)
                                 } else {
-                                    onOpenEntry(PaneId.RIGHT, entry)
+                                    openOrRun(PaneId.RIGHT, entry)
                                 }
                             },
-                            onEntryOpen = { entry -> onOpenEntry(PaneId.RIGHT, entry) },
+                            onEntryOpen = { entry -> openOrRun(PaneId.RIGHT, entry) },
                             onEntryLongClick = { entry ->
-                                onSetActivePane(PaneId.RIGHT)
                                 onToggleSelection(PaneId.RIGHT, entry)
                                 dialog = ScreenDialog.Actions(entry)
                             },
-                            onPathClick = {
-                                onSetActivePane(PaneId.RIGHT)
-                                dialog = ScreenDialog.PathInput
-                            },
+                            onPathClick = { dialog = ScreenDialog.PathInput },
                             onRetry = { onRefresh(PaneId.RIGHT) },
                             onGoUp = { onUp(PaneId.RIGHT) },
+                            onSweepStart = { onBeginSweep(PaneId.RIGHT) },
+                            onSweep = { entries -> onSweep(PaneId.RIGHT, entries) },
                             modifier = Modifier
                                 .weight(1f)
                                 .fillMaxSize(),
@@ -322,14 +350,17 @@ fun RootExplorerScreen(
                         pane = state.active,
                         focused = true,
                         showPathHeader = true,
+                        // Single-pane mode shows the active pane by definition, so there is
+                        // nothing to switch.
+                        onActivate = {},
                         onEntryClick = { entry ->
                             if (state.active.isSelectionMode) {
                                 onToggleSelection(state.activePane, entry)
                             } else {
-                                onOpenEntry(state.activePane, entry)
+                                openOrRun(state.activePane, entry)
                             }
                         },
-                        onEntryOpen = { entry -> onOpenEntry(state.activePane, entry) },
+                        onEntryOpen = { entry -> openOrRun(state.activePane, entry) },
                         onEntryLongClick = { entry ->
                             onToggleSelection(state.activePane, entry)
                             dialog = ScreenDialog.Actions(entry)
@@ -337,6 +368,8 @@ fun RootExplorerScreen(
                         onPathClick = { dialog = ScreenDialog.PathInput },
                         onRetry = { onRefresh(state.activePane) },
                         onGoUp = { onUp(state.activePane) },
+                        onSweepStart = { onBeginSweep(state.activePane) },
+                        onSweep = { entries -> onSweep(state.activePane, entries) },
                         modifier = Modifier.fillMaxSize(),
                     )
                 }
@@ -364,7 +397,22 @@ fun RootExplorerScreen(
                 onCopy = onCopySelection,
                 onMove = onMoveSelection,
                 onDelete = {
-                    state.active.primarySelection?.let { dialog = ScreenDialog.ConfirmDelete(it) }
+                    // In selection mode this is the whole swept selection; the long-press actions
+                    // dialog still deletes the one entry it was opened from.
+                    val entries = state.active.selectedEntries
+                    if (entries.isEmpty()) {
+                        onPostMessage("请先选择要删除的项目")
+                    } else {
+                        dialog = ScreenDialog.ConfirmDelete(entries)
+                    }
+                },
+                onPermission = {
+                    val entries = state.active.selectedEntries
+                    if (entries.isEmpty()) {
+                        onPostMessage("请先选择要修改权限的项目")
+                    } else {
+                        dialog = ScreenDialog.PermissionEditor(entries)
+                    }
                 },
                 onProperties = {
                     state.active.primarySelection?.let { dialog = ScreenDialog.Properties(it) }
@@ -386,9 +434,9 @@ fun RootExplorerScreen(
             selectionCount = state.active.selected.size,
             onDismiss = { dialog = ScreenDialog.None },
             onProperties = { dialog = ScreenDialog.Properties(current.entry) },
-            onPermission = { dialog = ScreenDialog.PermissionEditor(current.entry) },
+            onPermission = { dialog = ScreenDialog.PermissionEditor(listOf(current.entry)) },
             onRename = { dialog = ScreenDialog.Rename(current.entry) },
-            onDelete = { dialog = ScreenDialog.ConfirmDelete(current.entry) },
+            onDelete = { dialog = ScreenDialog.ConfirmDelete(listOf(current.entry)) },
             onCopyPath = {
                 copyToClipboard(context, current.entry.path)
                 onPostMessage("已复制路径：${current.entry.path}")
@@ -439,7 +487,7 @@ fun RootExplorerScreen(
         is ScreenDialog.Properties -> PropertiesDialog(
             entry = current.entry,
             loadStat = onLoadStat,
-            onEditPermission = { dialog = ScreenDialog.PermissionEditor(it) },
+            onEditPermission = { dialog = ScreenDialog.PermissionEditor(listOf(it)) },
             onOpenHash = { entry ->
                 onOpenHash(entry)
                 dialog = ScreenDialog.None
@@ -456,27 +504,37 @@ fun RootExplorerScreen(
         )
 
         is ScreenDialog.PermissionEditor -> PermissionEditorDialog(
-            entry = current.entry,
+            entries = current.entries,
             hasRoot = state.rootStatus.isUsable,
             busy = rootBusy,
             onDismiss = { dialog = ScreenDialog.None },
             onRequestRoot = onRequestRoot,
             onApply = { permission, recursive ->
                 // A change inside /system, /vendor, /data/adb … asks for an extra confirmation
-                // with the consequence spelled out, rather than proceeding quietly.
-                val warning = onSensitiveWarning(current.entry.path)
+                // with the consequence spelled out, rather than proceeding quietly. For a batch it
+                // is enough that one member sits in such a place.
+                val warning = current.entries.firstNotNullOfOrNull { onSensitiveWarning(it.path) }
                 if (warning != null) {
                     dialog = ScreenDialog.ConfirmSensitive(
-                        entry = current.entry,
+                        paths = current.entries.map { it.path },
                         warning = warning,
-                        proceed = { onChangePermissions(current.entry, permission, recursive) },
+                        proceed = {
+                            onChangePermissionsForSelection(current.entries, permission, recursive)
+                        },
                     )
                 } else {
-                    onChangePermissions(current.entry, permission, recursive)
+                    onChangePermissionsForSelection(current.entries, permission, recursive)
                     dialog = ScreenDialog.None
                 }
             },
-            onEditOwner = { dialog = ScreenDialog.OwnerGroup(current.entry) },
+            // Ownership is resolved per account name and confirmed per path; doing that once per
+            // entry asks the device's account database repeatedly for no benefit, so it stays a
+            // single-entry action.
+            onEditOwner = {
+                current.entries.singleOrNull()
+                    ?.let { dialog = ScreenDialog.OwnerGroup(it) }
+                    ?: onPostMessage("修改所有者与用户组一次只能作用于一项，请只选中一项。")
+            },
         )
 
         is ScreenDialog.OwnerGroup -> OwnerGroupEditorDialog(
@@ -492,7 +550,7 @@ fun RootExplorerScreen(
                 val warning = onSensitiveWarning(current.entry.path)
                 if (warning != null) {
                     dialog = ScreenDialog.ConfirmSensitive(
-                        entry = current.entry,
+                        paths = listOf(current.entry.path),
                         warning = warning,
                         proceed = { onChangeOwnership(current.entry, owner, group, recursive) },
                     )
@@ -506,9 +564,23 @@ fun RootExplorerScreen(
 
         is ScreenDialog.ConfirmSensitive -> SensitiveChangeDialog(
             warning = current.warning,
-            targetPath = current.entry.path,
+            targetPath = if (current.paths.size == 1) {
+                current.paths.first()
+            } else {
+                "以上 ${current.paths.size} 项"
+            },
             onConfirm = {
                 current.proceed()
+                dialog = ScreenDialog.None
+            },
+            onDismiss = { dialog = ScreenDialog.None },
+        )
+
+        is ScreenDialog.ScriptAction -> ScriptActionDialog(
+            entry = current.entry,
+            onRun = onRunScript,
+            onEdit = {
+                onOpenEditor(current.entry)
                 dialog = ScreenDialog.None
             },
             onDismiss = { dialog = ScreenDialog.None },
@@ -554,14 +626,14 @@ fun RootExplorerScreen(
         )
 
         is ScreenDialog.ConfirmDelete -> DeleteConfirmDialog(
-            entry = current.entry,
+            entries = current.entries,
             onDismiss = { dialog = ScreenDialog.None },
             onTrash = {
                 onTrashSelection()
                 dialog = ScreenDialog.None
             },
             onPermanentDelete = { recursive ->
-                onDelete(current.entry, recursive)
+                onDeleteEntries(current.entries, recursive)
                 dialog = ScreenDialog.None
             },
         )

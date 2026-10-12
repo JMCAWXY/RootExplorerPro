@@ -11,6 +11,7 @@ import io.rootexplorer.pro.service.fileoperation.FileOperationEngine
 import io.rootexplorer.pro.service.fileoperation.FileOperationsEngine
 import io.rootexplorer.pro.service.taskmanager.TaskManager
 import io.rootexplorer.pro.service.trash.TrashRepository
+import java.io.File
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.Dispatchers
@@ -27,13 +28,30 @@ class AppContainer(application: Application) {
     /** One shared shell: spawning a new `su` per call would re-trigger the root prompt. */
     val rootShell: RootShell = RootShell()
 
-    val rootAccess: RootAccess = RootAccess(rootShell)
+    /**
+     * Declared before [rootAccess] because the root hooks below read and write it, and Kotlin
+     * initialises properties in declaration order.
+     */
+    val settingsRepository: SettingsRepository = SettingsRepository(application)
+
+    /**
+     * Root detection and its memory.
+     *
+     * The two hooks are what make a grant survive the app being killed. Every probe's outcome is
+     * persisted, and a launch that finds a remembered grant re-probes silently — the root manager
+     * answers that without a prompt, because it stores the decision per app. Without them the
+     * status lived only in memory, so every cold start began at 未检测 and the user had to tap
+     * 授权 again after each full exit.
+     */
+    val rootAccess: RootAccess = RootAccess(
+        runCommand = rootShell::runBlocking,
+        wasGrantedBefore = { settingsRepository.wasRootGranted() },
+        onGrantRecorded = { granted -> settingsRepository.saveRootGranted(granted) },
+    )
 
     val fileSystem: SystemFileSystem = SystemFileSystem(rootAccess, rootShell)
 
     val storageVolumes: StorageVolumes = StorageVolumes(application)
-
-    val settingsRepository: SettingsRepository = SettingsRepository(application)
 
     val fileRepository: FileRepository = FileRepository(application, fileSystem)
 
@@ -87,6 +105,23 @@ class AppContainer(application: Application) {
     /** Read-only view of the installed packages. */
     val installedApps: io.rootexplorer.pro.core.apk.InstalledAppRepository =
         io.rootexplorer.pro.core.apk.InstalledAppRepository(application)
+
+    /** Decodes images for the viewer, subsampling so a huge photo cannot exhaust the heap. */
+    val imageLoader: io.rootexplorer.pro.core.image.ImageLoader =
+        io.rootexplorer.pro.core.image.ImageLoader()
+
+    /**
+     * Runs a shell script the user picked, in the environment and with the privileges they chose.
+     *
+     * The packaged environment points at the app's own native library directory, which is what
+     * makes 使用扩展包环境执行 a real difference rather than just a label.
+     */
+    val scriptRunner: io.rootexplorer.pro.core.script.ScriptRunner =
+        io.rootexplorer.pro.core.script.ScriptRunner(
+            rootShell = rootShell,
+            nativeLibraryDir = application.applicationInfo.nativeLibraryDir.orEmpty(),
+            filesBinDir = File(application.filesDir, "bin").absolutePath,
+        )
 }
 
 /** Application entry point; owns the container for the process lifetime. */

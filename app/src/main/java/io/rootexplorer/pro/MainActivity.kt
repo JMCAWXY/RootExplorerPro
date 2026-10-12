@@ -32,6 +32,8 @@ import io.rootexplorer.pro.feature.editor.EditorViewModel
 import io.rootexplorer.pro.feature.filebrowser.FileBrowserViewModel
 import io.rootexplorer.pro.feature.hash.HashDialog
 import io.rootexplorer.pro.feature.hash.HashViewModel
+import io.rootexplorer.pro.feature.image.ImageScreen
+import io.rootexplorer.pro.feature.image.ImageViewModel
 import io.rootexplorer.pro.feature.installedapps.InstalledAppsScreen
 import io.rootexplorer.pro.feature.installedapps.InstalledAppsViewModel
 import io.rootexplorer.pro.feature.search.SearchScreen
@@ -40,6 +42,8 @@ import io.rootexplorer.pro.feature.terminal.TerminalScreen
 import io.rootexplorer.pro.feature.terminal.TerminalViewModel
 import io.rootexplorer.pro.feature.trash.EmptyRule
 import io.rootexplorer.pro.feature.trash.TrashScreen
+import io.rootexplorer.pro.open.OpenableKind
+import io.rootexplorer.pro.open.openableKind
 import io.rootexplorer.pro.service.trash.TrashEntry
 import io.rootexplorer.pro.service.trash.TrashLocation
 import io.rootexplorer.pro.core.shell.ShellKind
@@ -82,7 +86,10 @@ class MainActivity : ComponentActivity() {
             var hashTarget by remember { mutableStateOf<io.rootexplorer.pro.core.filesystem.FileEntry?>(null) }
             var archiveTarget by remember { mutableStateOf<ArchiveTarget?>(null) }
 
-            RootExplorerTheme(mode = state.themeMode) {
+            RootExplorerTheme(
+                mode = state.themeMode,
+                imageLoader = container.imageLoader,
+            ) {
                 // The activity draws edge to edge (enableEdgeToEdge), so without explicit inset
                 // padding the top bar renders underneath the status bar and the clock overlaps
                 // the path text — which is exactly what happens on a real device, whose status
@@ -101,11 +108,36 @@ class MainActivity : ComponentActivity() {
                     Screen.Browser -> RootExplorerScreen(
                         state = state,
                         onNavigate = viewModel::navigate,
-                        onOpenEntry = viewModel::open,
+                        onOpenEntry = { pane, entry ->
+                            when (openableKind(entry)) {
+                                OpenableKind.IMAGE ->
+                                    screen = Screen.Image(entry.path, entry.name)
+
+                                // Text files open in the editor. The engine refuses anything that
+                                // turns out to be binary, so a lying extension cannot damage a file.
+                                OpenableKind.TEXT ->
+                                    screen = Screen.Editor(entry.path)
+
+                                // A script never reaches here: the browser intercepts it so it can
+                                // show the run dialog, which offers 编辑 as well.
+                                OpenableKind.SCRIPT -> viewModel.open(pane, entry)
+
+                                OpenableKind.ARCHIVE -> viewModel.postMessage(
+                                    "压缩包浏览与编辑尚未实现；可以长按压缩包先解压。",
+                                )
+
+                                // A directory navigates, and a kind the browser cannot show is
+                                // reported by its own open() — which states it out loud rather
+                                // than doing nothing silently.
+                                else -> viewModel.open(pane, entry)
+                            }
+                        },
                         onToggleSelection = viewModel::toggleSelection,
                         onClearSelection = viewModel::clearSelection,
                         onSelectAll = viewModel::selectAll,
                         onInvertSelection = viewModel::invertSelection,
+                        onBeginSweep = viewModel::beginSweep,
+                        onSweep = viewModel::extendSweep,
                         onSetActivePane = viewModel::setActivePane,
                         onSwapPanes = viewModel::swapPanes,
                         onToggleDualPane = viewModel::toggleDualPane,
@@ -127,6 +159,7 @@ class MainActivity : ComponentActivity() {
                         onCreateFile = viewModel::createFile,
                         onRename = viewModel::rename,
                         onDelete = viewModel::delete,
+                        onDeleteEntries = viewModel::deleteEntries,
                         onCopySelection = viewModel::copySelectionToOtherPane,
                         onMoveSelection = viewModel::moveSelectionToOtherPane,
                         onTrashSelection = viewModel::trashSelection,
@@ -134,11 +167,13 @@ class MainActivity : ComponentActivity() {
                         onOpenSearch = { screen = Screen.Search },
                         onOpenHash = { hashTarget = it },
                         onOpenEditor = { entry -> screen = Screen.Editor(entry.path) },
+                        onRunScript = viewModel::runScript,
                         onOpenCompress = { sources -> archiveTarget = ArchiveTarget.Compress(sources) },
                         onOpenExtract = { entry -> archiveTarget = ArchiveTarget.Extract(entry) },
                         onOpenApps = { screen = Screen.InstalledApps },
                         onOpenTerminal = { screen = Screen.Terminal },
                         onChangePermissions = viewModel::changePermissions,
+                        onChangePermissionsForSelection = viewModel::changePermissionsForSelection,
                         onChangeOwnership = viewModel::changeOwnership,
                         onValidateOwnerSpec = viewModel::validateOwnerSpec,
                         onResolveUid = viewModel::resolveUid,
@@ -314,6 +349,28 @@ class MainActivity : ComponentActivity() {
                             onDismissError = terminalViewModel::dismissError,
                         )
                     }
+
+                    is Screen.Image -> {
+                        val imagePath = currentScreen.path
+                        val imageViewModel: ImageViewModel = viewModel(
+                            factory = imageViewModelFactory(container),
+                        )
+                        val imageState by imageViewModel.state.collectAsStateWithLifecycle()
+
+                        // Decode whenever the target changes, so the same screen can show a
+                        // different picture without being rebuilt.
+                        LaunchedEffect(imagePath) {
+                            imageViewModel.open(imagePath)
+                        }
+
+                        BackHandler { screen = Screen.Browser }
+
+                        ImageScreen(
+                            state = imageState,
+                            displayName = currentScreen.name,
+                            onBack = { screen = Screen.Browser },
+                        )
+                    }
                 }
                 val hashEntry = hashTarget
                 if (hashEntry != null) {
@@ -451,6 +508,9 @@ class MainActivity : ComponentActivity() {
         data class Editor(val path: String) : Screen
         data object InstalledApps : Screen
         data object Terminal : Screen
+
+        /** The image viewer. [name] is the file's own name, for the title. */
+        data class Image(val path: String, val name: String) : Screen
     }
 
     /** The terminal has no dependencies beyond the shell it creates for itself. */
@@ -509,6 +569,17 @@ class MainActivity : ComponentActivity() {
             }
         }
 
+    private fun imageViewModelFactory(container: AppContainer): ViewModelProvider.Factory =
+        object : ViewModelProvider.Factory {
+            @Suppress("UNCHECKED_CAST")
+            override fun <T : ViewModel> create(modelClass: Class<T>): T {
+                if (modelClass.isAssignableFrom(ImageViewModel::class.java)) {
+                    return ImageViewModel(container.imageLoader) as T
+                }
+                throw IllegalArgumentException("未知的 ViewModel：${modelClass.name}")
+            }
+        }
+
     private fun searchViewModelFactory(container: AppContainer): ViewModelProvider.Factory =
         object : ViewModelProvider.Factory {
             @Suppress("UNCHECKED_CAST")
@@ -534,6 +605,7 @@ class MainActivity : ComponentActivity() {
                         taskManager = container.taskManager,
                         trashRepository = container.trashRepository,
                         permissionChanger = container.permissionChanger,
+                        scriptRunner = container.scriptRunner,
                     ) as T
                 }
                 throw IllegalArgumentException("未知的 ViewModel：${modelClass.name}")

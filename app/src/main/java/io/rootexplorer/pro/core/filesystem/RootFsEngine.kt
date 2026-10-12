@@ -89,7 +89,16 @@ class RootFsEngine(
 
         // `stat` field support differs between toybox and busybox, so we ask for the common
         // subset and format it ourselves into a known shape.
-        val format = "%A\\t%a\\t%s\\t%Y\\t%u\\t%g\\t%F\\t%N"
+        //
+        // The separator is a literal '|', deliberately *not* `\t`. This device's toybox `stat`
+        // does not expand backslash escapes in a format string: `stat -c '%A\t%a'` prints a
+        // literal backslash-t, so the tab-separated version arrived as one field and **every**
+        // call here failed with "stat 输出格式无法识别". That failure then surfaced as an *empty
+        // folder* reporting an error, because `list` falls back to this method to tell an empty
+        // directory from an empty file. '|' survives toybox intact and cannot occur in any of the
+        // first seven fields; the name is last and is split with a limit, so a '|' inside a file
+        // name is harmless.
+        val format = "%A|%a|%s|%Y|%u|%g|%F|%N"
         val command = "stat -c '$format' $quoted 2>&1; echo \"__EXIT__=\$?\""
         val result = shell.runBlocking(command)
         val (body, exitCode) = splitTrailer(result.stdout)
@@ -100,7 +109,7 @@ class RootFsEngine(
             )
         }
 
-        val fields = body.trim().lines().first().split('\t')
+        val fields = body.trim().lines().first().split('|', limit = 8)
         if (fields.size < 8) {
             return@withContext StatResult.Failure(
                 FsError.Unknown(normalised, "stat 输出格式无法识别：${body.take(120)}"),

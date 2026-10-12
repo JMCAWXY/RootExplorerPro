@@ -53,6 +53,16 @@ data class PaneState(
     val filteredOutCount: Int = 0,
     /** Total entries on disk in this directory, before filtering (for the statistics line). */
     val totalOnDisk: Int = 0,
+    /**
+     * Bumped every time a *new* listing is put on screen.
+     *
+     * The pane content animates on this value rather than on [path], because the path changes
+     * before the directory has been read. Keying the transition on the path would slide the old
+     * list out and then slide the same old list back in, with the new rows appearing afterwards
+     * and unanimated. Sorting and filtering deliberately do not bump it: re-ordering what is
+     * already on screen is not a navigation.
+     */
+    val listingGeneration: Int = 0,
 ) {
     val canGoBack: Boolean get() = historyIndex > 0
     val canGoForward: Boolean get() = historyIndex >= 0 && historyIndex < history.size - 1
@@ -139,6 +149,7 @@ fun PaneState.withListing(
         entries = sortSpec.apply(passing),
         totalOnDisk = listing.entries.size,
         filteredOutCount = visible.size - passing.size,
+        listingGeneration = listingGeneration + 1,
         isLoading = false,
         error = null,
         warnings = listing.warnings,

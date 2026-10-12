@@ -305,11 +305,23 @@ class FileOperationEngine(
                     when (val decision = resolver?.resolve(conflict)) {
                         is ConflictDecision.Apply -> decision.policy
                         ConflictDecision.CancelOperation, null -> {
+                            // "Cancel" means cancel the *operation*, not just this one prompt.
+                            // Nothing has been written yet — every conflict is resolved before
+                            // the transfer starts — so the partial counts are honestly zero and
+                            // the operation is reported as cancelled rather than completed.
+                            //
+                            // The previous version only returned here while no conflict had been
+                            // answered yet, and otherwise just broke out of the prompt loop and
+                            // let the transfer run: the answers already given were carried out
+                            // (so an "overwrite" the user was in the middle of reconsidering
+                            // destroyed the destination file), the unanswered conflicts were
+                            // silently skipped, and the result was reported as Completed.
                             onProgress(OperationProgress.Preparing(plan.totalFiles, plan.totalBytes))
-                            if (resolvedPolicy.isEmpty()) {
-                                return OperationOutcome.Cancelled(0, 0L, emptyList())
-                            }
-                            break
+                            return OperationOutcome.Cancelled(
+                                itemsCopied = 0,
+                                bytesCopied = 0L,
+                                failed = emptyList(),
+                            )
                         }
                     }
                 }

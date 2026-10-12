@@ -56,6 +56,7 @@ class FileBrowserViewModel(
     private val taskManager: io.rootexplorer.pro.service.taskmanager.TaskManager,
     private val trashRepository: io.rootexplorer.pro.service.trash.TrashRepository,
     private val permissionChanger: io.rootexplorer.pro.core.permissions.PermissionChanger,
+    private val scriptRunner: io.rootexplorer.pro.core.script.ScriptRunner,
 ) : ViewModel() {
 
     private val _state = MutableStateFlow(initialUiState(settingsRepository.load()))
@@ -82,6 +83,32 @@ class FileBrowserViewModel(
             )
         }
         navigate(PaneId.LEFT, startPath, addToHistory = false)
+
+        // A root grant the user gave in an earlier run must not have to be given again just
+        // because the process was killed.
+        restoreRootInBackground()
+    }
+
+    /**
+     * Re-probe root when a grant was remembered from a previous run.
+     *
+     * Safe to run at launch precisely because it happens only when a grant was recorded: the root
+     * manager stores that decision per app, so the probe returns silently instead of prompting.
+     * On a device that has never granted root nothing is executed at all, which preserves the
+     * rule that the launch path never triggers an authorization prompt.
+     *
+     * Deliberately off the critical path: the first listing must not wait on `su`.
+     */
+    private fun restoreRootInBackground() {
+        viewModelScope.launch {
+            val restored = fs.restorePreviousRoot() ?: return@launch
+            _state.update { it.copy(rootStatus = restored) }
+            if (restored.isUsable) {
+                // The active engine just changed, so both panes are re-read through root.
+                refresh(PaneId.LEFT)
+                refresh(PaneId.RIGHT)
+            }
+        }
     }
 
     // ------------------------------------------------------------------ navigation
@@ -160,9 +187,9 @@ class FileBrowserViewModel(
         if (isDirectory) {
             navigate(pane, entry.path)
         } else {
-            // Opening a file by type is P3 (open-with / Intent). Until then we must say so
-            // rather than silently doing nothing.
-            postMessage("暂不支持打开文件：${entry.name}（打开方式将在 P3 实现）")
+            // Anything the browser cannot show itself is stated out loud rather than silently
+            // doing nothing. Images and archives are routed before this point is reached.
+            postMessage("暂不支持打开该类型的文件：${entry.name}")
         }
     }
 
@@ -249,6 +276,33 @@ class FileBrowserViewModel(
         }
     }
 
+    /**
+     * The selection a sweep started from.
+     *
+     * Kept here rather than in the UI so that repeated sweeps accumulate. The gesture only ever
+     * reports the rows it currently covers; unioning that with what was selected when the finger
+     * went down is what makes "swipe 1→4, then 6→7" select six rows instead of replacing the
+     * first group. (To drop a row, tap it: a tap in selection mode toggles it off.)
+     */
+    private var sweepBase: Set<String> = emptySet()
+
+    /** A sweep has begun in [pane]: remember what it starts from, and focus that pane. */
+    fun beginSweep(pane: PaneId) {
+        sweepBase = _state.value.pane(pane).selected
+        setActivePane(pane)
+    }
+
+    /**
+     * Update the rows a sweep currently covers.
+     *
+     * [entries] is the full range between the row the sweep started on and the row it is over now,
+     * so the selection follows the finger in both directions rather than only growing.
+     */
+    fun extendSweep(pane: PaneId, entries: List<FileEntry>) {
+        val union = sweepBase + entries.map { it.path }
+        updatePane(pane) { it.copy(selected = union, isSelectionMode = union.isNotEmpty()) }
+    }
+
     // ------------------------------------------------------------------ view options
 
     fun setSortField(field: FileSortField) {
@@ -325,6 +379,59 @@ class FileBrowserViewModel(
         viewModelScope.launch {
             val result = fileOperations.delete(entry.path, recursive)
             finishOperation(result, refreshPane = paneOf(entry.path))
+        }
+    }
+
+    /**
+     * Delete every selected entry in the focused pane.
+     *
+     * Runs one delete at a time through the same engine the single-entry action uses, so each path
+     * is verified by being re-read afterwards. The report counts what actually went and names what
+     * did not, instead of presenting the batch as one success — a batch delete that silently skips
+     * a few files is exactly the kind of lie this app must not tell.
+     */
+    fun deleteEntries(entries: List<FileEntry>, recursive: Boolean) {
+        if (entries.isEmpty()) {
+            postMessage("请先选择要删除的项目")
+            return
+        }
+        val pane = _state.value.activePane
+
+        viewModelScope.launch {
+            var deleted = 0
+            val failures = mutableListOf<String>()
+            for (entry in entries) {
+                when (val result = fileOperations.delete(entry.path, recursive)) {
+                    is OperationResult.Success -> deleted++
+                    is OperationResult.Failure -> failures += "${entry.name}：${result.message}"
+                    is OperationResult.NotImplemented -> failures += "${entry.name}：${result.message}"
+                }
+            }
+            clearSelection(pane)
+            refresh(pane)
+            postMessage(batchSummary("已删除", deleted, entries.size, failures))
+        }
+    }
+
+    /**
+     * A one-line result for a batch operation.
+     *
+     * Only the first few problems are spelled out; a batch over a directory tree can fail in
+     * dozens of places and a wall of text hides the count that actually matters.
+     */
+    private fun batchSummary(
+        verb: String,
+        succeeded: Int,
+        total: Int,
+        failures: List<String>,
+    ): String = buildString {
+        append(verb).append(' ').append(succeeded).append(" 项")
+        if (failures.isEmpty()) {
+            if (succeeded < total) append("（共 ").append(total).append(" 项）")
+        } else {
+            append("，").append(failures.size).append(" 项失败：")
+            append(failures.take(3).joinToString("；"))
+            if (failures.size > 3) append(" …另有 ").append(failures.size - 3).append(" 项")
         }
     }
 
@@ -547,6 +654,26 @@ class FileBrowserViewModel(
     suspend fun statFor(path: String): io.rootexplorer.pro.core.filesystem.StatResult =
         fileRepository.stat(path)
 
+    /**
+     * Run a script the user asked to run, and hand the outcome back to the dialog that asked.
+     *
+     * The root case is refused up front when root is not available. Letting it run as the app
+     * instead would report the app's permission failures as if they were the script's fault, which
+     * is the wrong story to tell about someone's script.
+     */
+    suspend fun runScript(
+        entry: FileEntry,
+        environment: io.rootexplorer.pro.core.script.ScriptEnvironment,
+        useRoot: Boolean,
+    ): io.rootexplorer.pro.core.script.ScriptOutcome {
+        if (useRoot && !fs.rootStatus.isUsable) {
+            return io.rootexplorer.pro.core.script.ScriptOutcome.Failed(
+                "已勾选以 ROOT 权限执行，但当前没有 Root 权限。请先在侧边栏授权，或取消勾选后重试。",
+            )
+        }
+        return scriptRunner.run(entry.path, environment, useRoot)
+    }
+
     // ------------------------------------------------------------------ root changes (P2)
 
     /**
@@ -572,6 +699,48 @@ class FileBrowserViewModel(
             _state.update { it.copy(rootBusy = false) }
             postMessage(describeChange(result, entry.name))
             refresh(paneOf(entry.path))
+        }
+    }
+
+    /**
+     * Apply one permission set to several entries, each verified by re-reading it.
+     *
+     * A batch is deliberately *not* one `chmod -R`: the entries can sit in unrelated directories,
+     * and the verification this app insists on has to read each path back on its own. So the cost
+     * is one `su` per entry, and the report counts what was confirmed rather than claiming the
+     * whole batch landed.
+     */
+    fun changePermissionsForSelection(
+        entries: List<FileEntry>,
+        permission: LinuxPermission,
+        recursive: Boolean,
+    ) {
+        if (entries.isEmpty()) {
+            postMessage("请先选择要修改权限的项目")
+            return
+        }
+
+        viewModelScope.launch {
+            _state.update { it.copy(rootBusy = true) }
+            var applied = 0
+            val problems = mutableListOf<String>()
+            for (entry in entries) {
+                val result = permissionChanger.changeMode(
+                    entry = entry,
+                    permission = permission,
+                    recursive = recursive,
+                    readStat = { path -> fileRepository.stat(path) },
+                )
+                if (result is io.rootexplorer.pro.core.permissions.ChangeResult.Applied) {
+                    applied++
+                } else {
+                    problems += describeChange(result, entry.name)
+                }
+            }
+            _state.update { it.copy(rootBusy = false) }
+            postMessage(batchSummary("已修改权限（${permission.octal}）", applied, entries.size, problems))
+            refresh(PaneId.LEFT)
+            refresh(PaneId.RIGHT)
         }
     }
 

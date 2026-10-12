@@ -17,6 +17,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.view.WindowCompat
+import io.rootexplorer.pro.core.image.ImageLoader
 
 /** Which theme the user asked for. */
 enum class ThemeMode(val label: String) {
@@ -184,6 +185,13 @@ val CompactCorner = 8.dp
 @Composable
 fun RootExplorerTheme(
     mode: ThemeMode = ThemeMode.SYSTEM,
+    /**
+     * The shared image loader, so a file row can draw a thumbnail.
+     *
+     * Passed here rather than threaded through every screen and pane: it is app-scoped, not screen
+     * state, and a thumbnail and the full-size viewer must share one cache to be worth anything.
+     */
+    imageLoader: ImageLoader? = null,
     content: @Composable () -> Unit,
 ) {
     val darkTheme = when (mode) {
@@ -205,7 +213,10 @@ fun RootExplorerTheme(
         }
     }
 
-    androidx.compose.runtime.CompositionLocalProvider(LocalFileManagerColors provides fileManagerColors) {
+    androidx.compose.runtime.CompositionLocalProvider(
+        LocalFileManagerColors provides fileManagerColors,
+        LocalImageLoader provides imageLoader,
+    ) {
         MaterialTheme(
             colorScheme = colorScheme,
             typography = FileManagerTypography,

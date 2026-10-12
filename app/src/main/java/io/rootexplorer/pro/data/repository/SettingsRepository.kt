@@ -70,6 +70,19 @@ class SettingsRepository(context: Context) {
     fun isBookmarked(path: String): Boolean =
         prefs.getStringSet(KEY_BOOKMARKS, emptySet()).orEmpty().contains(path)
 
+    /**
+     * True when a previous run ended with root granted.
+     *
+     * Used for one thing only: deciding whether a *silent* re-probe at launch is safe. It is
+     * deliberately not treated as evidence that root works now — a grant can be revoked in the
+     * root manager between runs, and reporting root without verifying it is exactly what this
+     * app must not do.
+     */
+    fun wasRootGranted(): Boolean = prefs.getBoolean(KEY_ROOT_GRANTED, false)
+
+    /** Record whether root is currently known to work, so the next launch can act on it. */
+    fun saveRootGranted(granted: Boolean) = prefs.edit { putBoolean(KEY_ROOT_GRANTED, granted) }
+
     private inline fun <reified T : Enum<T>> enumOrDefault(name: String?, fallback: T): T {
         if (name == null) return fallback
         return runCatching { enumValueOf<T>(name) }.getOrDefault(fallback)
@@ -82,5 +95,13 @@ class SettingsRepository(context: Context) {
         const val KEY_SORT_DIR = "sort_direction"
         const val KEY_HOME = "home_path"
         const val KEY_BOOKMARKS = "bookmarks"
+
+        /**
+         * Whether root was granted the last time it was probed.
+         *
+         * Deliberately not part of [AppSettings]: it is not a view preference, and the UI must
+         * never be handed a remembered grant as if it were a live status.
+         */
+        const val KEY_ROOT_GRANTED = "root_granted"
     }
 }

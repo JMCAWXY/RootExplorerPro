@@ -2,7 +2,7 @@
 
 > 双栏 Root 文件管理器 · Kotlin + Jetpack Compose + Material 3 · MVVM
 >
-> 版本 `0.4.0-P3` · 文档日期 2026-10-11
+> 版本 `0.5.0` · 文档日期 2026-10-12 · 逐版本变更见 [CHANGELOG.md](CHANGELOG.md)
 
 ---
 
@@ -13,7 +13,7 @@
 | 层面 | 状态 |
 |---|---|
 | **代码实现** | ✅ 全部完成。10 个功能模块、26 个包、54 个主源码文件（15 880 行）。无 `TODO`、无 `NotImplementedError`、无假成功状态 |
-| **单元测试验证** | ✅ 304 个测试全部通过（16 个测试文件） |
+| **单元测试验证** | ✅ 355 个测试全部通过（23 个测试文件） |
 | **真机行为验证** | ⚠️ **大部分完成**。设备中途接入，root 相关核心路径（列表、chmod 全特殊位、chown、只读分区、终端分帧）已实测；余下为 UI 点击类流程 |
 
 ### 唯一的"未完成"是四类额外功能，且它们不在本项目需求范围内
@@ -181,7 +181,7 @@ app/src/main/java/io/rootexplorer/pro/
 ├── data/repository/   2 文件  144 行  设置持久化
 └── util/              1 文件   71 行  Formatter（大小/日期/名称）
 
-测试：app/src/test/ 16 文件 3131+ 行，304 个用例
+测试：app/src/test/ 23 文件 4616 行，355 个用例
 ```
 
 **分层原则**：`core` 不依赖 UI，所以全部可在 JVM 单元测试里覆盖；`feature` 只做状态与渲染；`service` 承载跨屏的生命周期（例如复制任务在旋转后仍继续）。
@@ -244,11 +244,71 @@ app/src/main/java/io/rootexplorer/pro/
 
 终端会话若已超时/终止，**下一次执行前**先探测；探测失败则如实报告，而不是让命令挂在一个死掉的进程上。
 
+### 5.9 root 授权跨进程保持
+
+原先 root 状态只存在内存里（`RootAccess.status`），进程一被杀就回到「未检测」，于是用户
+**每次大退都要重新点一次授权**。
+
+做法是**记住"曾经拿到过 root"**（`SharedPreferences` 的 `root_granted`），启动时**只在有这个
+记忆时才静默重探**。之所以安全，是因为 root 管理器（KernelSU / Magisk）**按应用**保存授权决定，
+重探会被立刻放行、不弹框。
+
+三条不许越界的底线：
+
+- **从没授权过的设备上，启动时一条命令都不执行。** 那种情况下的探测恰恰就是"弹出授权框"的
+  原因，启动路径必须永远不触发它——`RootAccessTest` 专门钉住这一条。
+- **记忆不等于信任。** `root_granted` 只用来决定"要不要静默重探"，**绝不**用来直接显示
+  「已获得 Root」；root 仍然只在探测**实际返回 uid 0** 之后才被报告。
+- **失效的记忆必须清除。** 用户在管理器里撤销授权后重探会失败，此时立刻把 `root_granted`
+  置回 false，否则下次启动又会探测——而探测一个已被撤销的授权，正是让管理器再次弹框的原因。
+
+重探在**后台**进行（`FileBrowserViewModel.restoreRootInBackground`），不阻塞首屏列表展开。
+
+### 5.10 左滑选中、范围多选与批量操作
+
+**手势**：在文件列表上**向左**滑动即进入选择。手势挂在**列表**上而不是每行上——只有挂在列表上
+才能看见"跨行拖动"（这正是范围多选的意义），而且能用 `LazyListState.layoutInfo` 按 Y 坐标反查
+当前行，每行零成本。
+
+**方向判定**（纯函数 `classifySwipe`，有单测）：必须**横向且向左**才接管手势。
+
+- 竖向为主的拖动留给列表滚动（否则手指稍斜就滚不动了）；
+- 向右滑**不接管**（预留给以后的功能，也避免手一抖就选中）；
+- 阈值 24dp，**正好达阈值即算选中**；tap 的抖动不会变成滑动。
+
+**范围多选**：从按下的那一行（锚点）到手指当前所在行取**闭区间**（`selectionRange`）。
+每次更新把选区设为"锚点快照 ∪ 当前区间"，于是：
+
+- 拖回去会**缩小**范围，而不是只增不减；
+- 连着扫第二段会**累加**，不会把第一段丢掉；
+- 撤销个别项：选择态下**点一下**该项即可切换（**没有**"右滑取消"）；
+- 拖到列表边缘**不会自动滚动**（未做）。
+
+**批量操作**：选择态底栏给出 复制 / 移动 / **删除** / **权限** / 回收站 / 属性 / 取消，
+其上方显示「已选 N 项」。
+
+- **删除**：二次确认（列出前 6 个名字），逐个调用同一个删除引擎（**每条都回读验证**），
+  结果如实报「已删除 N 项，M 项失败：…」。
+- **权限**：复用权限编辑器，**一套权限应用到整组**。逐项 `chmod` 并逐项回读，代价是
+  **每项一次 `su`**——刻意不是一条 `chmod -R`，因为这些项可能根本不在同一棵目录树里。
+  任一项落在敏感路径（`/system`、`/data/adb` …）先弹风险确认。
+- **所有者 / 用户组保持单项**：它要按名字查设备账号库并逐项回读校验，批量只是把同一个查询
+  重复 N 次，没有收益；因此只在选中一项时可用，否则明确提示。
+
+**动画**：
+
+- **按压**：`FileRow` 按下时缩放 0.975 并轻微变暗（90ms），配合原有的涟漪，让点击有落点感。
+- **增删条目**：列表项应用 `Modifier.animateItem()`，删除时该项淡出收缩、下方条目上移补位。
+- **进入 / 返回目录**：`AnimatedContent` 以 `listingGeneration` 为 `contentKey`——**不是**挂在
+  `path` 上。因为路径在目录读出来**之前**就变了，挂在路径上会"把旧列表滑出去、再把同一份旧列表
+  滑回来"，新行随后无动画地出现。用 generation 则动画在新数据就绪时才播，且选中/排序变化**不**触发动画。
+  进入子目录从右滑入，返回上级从左滑入，并叠加淡入淡出（220ms / 160ms）。
+
 ---
 
 ## 6. 验证记录
 
-### 6.1 单元测试（304 个，全部通过）
+### 6.1 单元测试（355 个，全部通过）
 
 | 测试套件 | 数量 | 覆盖 |
 |---|---|---|
@@ -258,7 +318,7 @@ app/src/main/java/io/rootexplorer/pro/
 | `LsLineParsingTest` | 9 | `ls -la` 解析（针对真机原始输出） |
 | `RootListingIntegrationTest` | 6 | Root 列表端到端：目录必须在、任何条目标题不得以 `->` 开头 |
 | `SortAndFilterTest` | 17 | 目录优先、升降序下未知值恒最后、过滤器 |
-| `FileOperationPlanTest` | 24 | 复制/移动计划、冲突、策略、真实字节级读写、符号链接环 |
+| `FileOperationPlanTest` | 25 | 复制/移动计划、冲突、策略、真实字节级读写、符号链接环 |
 | `TrashIndexCodecTest` | 14 | 制表符/换行/反斜杠免疫的索引往返 |
 | `PermissionChangerTest` | 30 | 校验规则、特殊位、名称与 uid 等价、敏感路径 |
 | `SearchEngineTest` | 19 | 递归与单层、过滤、隐藏文件、部分失败、批处理、结果上限 |
@@ -268,6 +328,13 @@ app/src/main/java/io/rootexplorer/pro/
 | `InstalledAppLogicTest` | 22 | 应用过滤/排序规则、导出命名、拆分 APK |
 | `ShellSessionFramingTest` | 20 | 终端命令分帧、退出码解析、输出上限 |
 | `PermissionDeviceEvidenceTest` | 17 | 真机实测的 chmod/chown 值：setuid/setgid/sticky 解析、四位八进制、只读文件系统、bad user |
+| `FormatterTest` | 13 | 文件大小/日期/名称/权限的格式化文本（文件列表每一行都走这条路径） |
+| `RootAccessTest` | 6 | root 探测的决策规则：从没授权过的设备启动时**一条命令都不执行**、记忆的授权静默重探、失效的授权必须被清除 |
+| `ImageLoaderTest` | 4 | 图片采样率算法——它决定实际分配多少像素，写错就是 OutOfMemoryError |
+| `OpenableKindTest` | 10 | 「打开」的判定：目录/指向目录的软链接 → 导航、图片 → 看图、**sh 系列 → 运行弹窗**、**文本 → 编辑器**、可解析的压缩包 → 浏览、二进制文档如实报 unsupported |
+| `ScriptRunnerTest` | 5 | 脚本执行的命令行构造：系统/扩展包环境的前缀、扩展包无目录时不加前缀、**含空格与单引号的恶意路径必须留在一个参数里** |
+| `FileTypeCoverageTest` | 4 | 扩展名识别表的覆盖：`12.zip` 是压缩包、`1.txt` 是文档、大小写无关、**26 个常见格式逐个断言**（缺一个就构建失败，而不是静默变成"未知"） |
+| `SwipeSelectionTest` | 8 | 左滑选中的两个判定：横竖方向与阈值的边界（正好达标算选中）、区间在上下两个方向都成立 |
 
 ### 6.2 真机验证结论
 
@@ -282,7 +349,12 @@ app/src/main/java/io/rootexplorer/pro/
 - 终端命令分帧：`printf` 正确报告 `$?`（`0` 和 `1` 都实测过）、多行输出只由一行状态行收尾、`cd` 在同一个 root 会话内跨命令保持
 - 应用自身 UID 在需要 root 处被**正确拒绝**（"能提权"和"不会被拒"是两件事，两者都验证了）
 - 安装、启动、多次重建后持续运行无崩溃
-- `MANAGE_EXTERNAL_STORAGE: allow`，共享存储可读
+- `MANAGE_EXTERNAL_STORAGE: allow`，共享存储可读（应用显示 `文件夹：16 文件：0`，与
+  `ls -a /storage/emulated/0` 的真实内容一致，两个隐藏项被正确过滤）
+- **root 授权跨进程保持（2026-10-12 实测）**：在侧边栏点一次「点击授权」并允许后，
+  `root_granted=true` 写入 `SharedPreferences`；随后 `am force-stop` 彻底杀进程
+  （pid 为空）再启动，**不点任何按钮**，`ROOT` 徽标两个栏都自己回来。
+  连续两次冷启动结果一致。`:app:lintDebug` 无新增问题，logcat 无应用侧报错。
 
 **仍未实测：** 见 §1 的缺口清单。权限编辑器只验证到"规则与命令构造"，没有人点过那些勾选框。
 
@@ -381,12 +453,28 @@ $env:ANDROID_USER_HOME  = "$ws\.android-home"   # 否则尝试写 C:\Users\ASUS\
 
 ```powershell
 cd $ws
-.\gradlew.bat :app:testDebugUnitTest   # 304 个单元测试
+.\gradlew.bat :app:testDebugUnitTest   # 355 个单元测试
 .\gradlew.bat :app:assembleDebug       # 产出 APK
 .\gradlew.bat :app:lintDebug           # 静态检查
 ```
 
 **注意**：不要加 `-i`，也不要把 `--console=plain` 和 `Select-String` 混用，否则输出会被吞。
+
+### 本机特有的构建绕过：aapt2
+
+本机 Gradle 缓存里那份 Maven 版 aapt2
+（`.gradle-home/caches/<gradle>/transforms/<hash>/transformed/aapt2-<agp>-windows/aapt2.exe`）
+**无法渲染自己的诊断消息**。它一旦需要报错就输出：
+
+```
+AAPT: error: failed to load XML file: Error 15100 while retrieving message for error 13.
+```
+
+这串话点名的是构建自己刚写出的 `AndroidManifest.xml`，所以看起来像 manifest 损坏或编码问题，
+**实际上真正的错误被它吃掉了**（实测被掩盖的只是一条 `resource drawable/… not found`）。
+
+`gradle.properties` 里的 `android.aapt2FromMavenOverride` 指向 SDK 自带的 aapt2（同样 2.20），
+错误立即可读、构建恢复正常。换到 aapt2 正常的机器上可以删掉这一行。
 
 ### 产物与安装
 
@@ -520,7 +608,7 @@ $adb = 'H:\Android studio SDK\platform-tools\adb.exe'
 | `README.md` | 面向开发者的状态说明、阶段记录、真机 bug 记录 |
 | `PROJECT.md`（本文件） | 完整项目文档：功能清单、架构、设计决策、验证记录、验收清单 |
 | `app/src/main/java/io/rootexplorer/pro/` | 主源码，54 文件 |
-| `app/src/test/java/io/rootexplorer/pro/` | 单元测试，16 文件 / 304 用例 |
+| `app/src/test/java/io/rootexplorer/pro/` | 单元测试，23 文件 / 355 用例 |
 | `app/build/outputs/apk/debug/app-debug.apk` | 构建产物 |
 | `settings.gradle.kts` | 依赖镜像配置（本机必需） |
 | `local.properties` | `sdk.dir`（未纳入版本控制） |

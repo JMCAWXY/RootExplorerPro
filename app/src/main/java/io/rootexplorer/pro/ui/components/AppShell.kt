@@ -26,10 +26,13 @@ import androidx.compose.material.icons.filled.Brightness6
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.DeleteForever
 import androidx.compose.material.icons.filled.Edit
+import androidx.compose.material.icons.filled.FilterAlt
 import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.filled.Info
+import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.Menu
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Refresh
@@ -48,18 +51,28 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.res.stringResource
+import io.rootexplorer.pro.BuildConfig
+import io.rootexplorer.pro.R
 import io.rootexplorer.pro.core.root.RootStatus
 import io.rootexplorer.pro.feature.filebrowser.FileBrowserUiState
 import io.rootexplorer.pro.feature.filebrowser.PaneId
 import io.rootexplorer.pro.ui.theme.FileManagerTheme
 import io.rootexplorer.pro.ui.theme.MetaTextStyle
 import io.rootexplorer.pro.util.Formatter
+
+/** The content opacity Material uses for a disabled control. */
+private const val DISABLED_CONTENT_ALPHA = 0.38f
 
 /**
  * The two-layer top bar.
@@ -116,7 +129,9 @@ fun TopBar(
 
                 if (state.filter.isActive) {
                     Icon(
-                        imageVector = Icons.Filled.Visibility,
+                        // An eye glyph reads as "show hidden files" everywhere else in this app;
+                        // a filter glyph is what "a filter is narrowing this list" looks like.
+                        imageVector = Icons.Filled.FilterAlt,
                         contentDescription = "过滤器已启用",
                         tint = colors.toolbarSecondary,
                         modifier = Modifier.size(16.dp),
@@ -213,6 +228,8 @@ fun BottomActionBar(
     onCopy: () -> Unit,
     onMove: () -> Unit,
     onDelete: () -> Unit,
+    /** Batch permission change for the whole selection. */
+    onPermission: () -> Unit,
     onProperties: () -> Unit,
     onMore: () -> Unit,
     onClearSelection: () -> Unit,
@@ -224,6 +241,16 @@ fun BottomActionBar(
     Surface(color = MaterialTheme.colorScheme.surfaceVariant, tonalElevation = 3.dp) {
         Column {
             HorizontalDivider(color = colors.divider)
+            if (pane.isSelectionMode) {
+                // A sweep can mark a dozen rows in one motion, so the count is the feedback that
+                // says how many the pending action would touch.
+                Text(
+                    text = "已选 ${pane.selected.size} 项",
+                    style = MetaTextStyle,
+                    color = MaterialTheme.colorScheme.primary,
+                    modifier = Modifier.padding(start = 12.dp, top = 4.dp),
+                )
+            }
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -232,15 +259,11 @@ fun BottomActionBar(
                 horizontalArrangement = Arrangement.SpaceEvenly,
             ) {
                 if (pane.isSelectionMode) {
-                    BarAction(
-                        icon = Icons.AutoMirrored.Filled.ArrowBack,
-                        label = "返回",
-                        enabled = pane.canGoBack,
-                        onClick = onBack,
-                    )
                     BarAction(Icons.Filled.Add, "复制", enabled = true, onClick = onCopy)
                     BarAction(Icons.AutoMirrored.Filled.ArrowForward, "移动", enabled = true, onClick = onMove)
-                    BarAction(Icons.Filled.Delete, "移入回收站", enabled = true, onClick = onTrash)
+                    BarAction(Icons.Filled.DeleteForever, "删除", enabled = true, onClick = onDelete)
+                    BarAction(Icons.Filled.Lock, "权限", enabled = true, onClick = onPermission)
+                    BarAction(Icons.Filled.Delete, "回收站", enabled = true, onClick = onTrash)
                     BarAction(Icons.Filled.Info, "属性", enabled = true, onClick = onProperties)
                     BarAction(Icons.Filled.Close, "取消", enabled = true, onClick = onClearSelection)
                 } else {
@@ -279,12 +302,23 @@ private fun BarAction(
     enabled: Boolean,
     onClick: () -> Unit,
 ) {
-    val colors = FileManagerTheme.colors
-    val tint = if (enabled) MaterialTheme.colorScheme.onSurfaceVariant else colors.divider
+    // Disabled actions keep the normal content colour at Material's 38% instead of switching to
+    // the divider colour. That divider tone is within ~1.1:1 of the bar's own surface in both
+    // themes, so an unavailable action became indistinguishable from a missing one — the bottom
+    // bar looked like it had three buttons when it has five.
+    val tint = if (enabled) {
+        MaterialTheme.colorScheme.onSurfaceVariant
+    } else {
+        MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = DISABLED_CONTENT_ALPHA)
+    }
     Column(
         horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.Center,
         modifier = Modifier
             .clickable(enabled = enabled, onClick = onClick)
+            // Material's minimum touch target is 48dp; the icon plus its caption came to about
+            // 40dp, which is tight for a one-handed tap on a phone.
+            .heightIn(min = 48.dp)
             .padding(horizontal = 6.dp, vertical = 3.dp),
     ) {
         Icon(imageVector = icon, contentDescription = label, tint = tint, modifier = Modifier.size(20.dp))
@@ -321,6 +355,8 @@ fun DrawerContent(
     onOpenTool: (String) -> Unit,
 ) {
     val colors = FileManagerTheme.colors
+    // The About page is opened from the drawer's footer.
+    var aboutOpen by remember { mutableStateOf(false) }
     androidx.compose.material3.ModalDrawerSheet(
         drawerContainerColor = MaterialTheme.colorScheme.surface,
     ) {
@@ -345,7 +381,7 @@ fun DrawerContent(
                         Spacer(Modifier.width(10.dp))
                         Column(modifier = Modifier.weight(1f)) {
                             Text(
-                                text = "Root Explorer Pro",
+                                text = stringResource(R.string.app_name),
                                 style = MaterialTheme.typography.titleSmall,
                                 color = colors.onToolbar,
                                 fontWeight = FontWeight.SemiBold,
@@ -444,13 +480,52 @@ fun DrawerContent(
 
             Spacer(Modifier.height(16.dp))
             Text(
-                text = "版本 0.1.0-P0（开发阶段）",
+                // Read from the build, never hand-written: the previous hard-coded label had
+                // already gone stale and advertised a version this build is not.
+                text = "版本 ${BuildConfig.VERSION_NAME} · 关于",
                 style = MetaTextStyle,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
+                color = MaterialTheme.colorScheme.primary,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clickable { aboutOpen = true }
+                    .padding(horizontal = 16.dp, vertical = 12.dp),
             )
         }
     }
+
+    if (aboutOpen) {
+        AboutDialog(onDismiss = { aboutOpen = false })
+    }
+}
+
+/**
+ * The About page.
+ *
+ * The name is read from `app_name` rather than written out again, so the drawer, this page, the
+ * launcher label and the recents card can never disagree about what this app is called.
+ */
+@Composable
+private fun AboutDialog(onDismiss: () -> Unit) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        confirmButton = { TextButton(onClick = onDismiss) { Text("关闭") } },
+        title = { Text(stringResource(R.string.app_name)) },
+        text = {
+            Column {
+                Text(
+                    text = "版本 ${BuildConfig.VERSION_NAME}（build ${BuildConfig.VERSION_CODE}）",
+                    style = MaterialTheme.typography.bodyMedium,
+                )
+                Spacer(Modifier.height(8.dp))
+                Text(
+                    text = "给已 root 的安卓手机用的双栏文件管理器：真实文件系统读写、Root 权限与属主编辑、" +
+                        "回收站、递归搜索、压缩包与哈希工具、文本编辑器、终端模拟器。",
+                    style = MetaTextStyle,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+        },
+    )
 }
 
 @Composable
@@ -481,6 +556,8 @@ private fun DrawerRow(
         modifier = Modifier
             .fillMaxWidth()
             .clickable(enabled = enabled, onClick = onClick)
+            // Material's minimum touch target; the row's own content is only about 38dp tall.
+            .heightIn(min = 48.dp)
             .padding(horizontal = 16.dp, vertical = 9.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {

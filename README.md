@@ -1,628 +1,622 @@
-# Root Explorer Pro
+# MYWxy
 
-A professional dual-pane file manager for **rooted Android phones**, written in Kotlin with
-Jetpack Compose and Material 3.
+给**已 root 的安卓手机**用的专业双栏文件管理器，Kotlin + Jetpack Compose + Material 3 编写。
 
-Project status: **P0–P3 implemented** — the project compiles, 304 unit tests pass, and a debug
-APK is produced. The file browser reads real filesystem data; nothing in the file list is
-hard-coded demo content.
+项目状态：**P0–P3 已实现**，另有 P3 之后的一批增强 —— 项目可编译、**355 个单元测试全部通过**、
+能产出 debug APK。文件列表读的是真实文件系统，**列表里没有任何硬编码的演示数据**。
 
-**Verified on real hardware.** A rooted Xiaomi 2211133C (Android 17 / API 37, 1080×2400,
-KernelSU) was connected partway through the work, which changed the picture substantially: it
-exposed **three bugs that no unit test could have caught** (see §5). Those are fixed and the app
-now installs, launches and runs on the device without crashing.
+**已在真机上验证。** 开发中途接上了一台已 root 的小米 2211133C（Android 17 / API 37，
+1080×2400，KernelSU），这台机器**改变了结论**：它暴露了 **9 个单元测试永远抓不到的 bug**（见 §5）。
+它们都已修复，应用现在能在该设备上安装、启动、持续运行而不崩溃。
 
-Still not verified on hardware: the copy/move progress UI, the recycle-bin screens, hashing and
-archive dialogs, and the editor — those were exercised only by unit tests and static reasoning.
-§6 lists the exact state of every feature.
+仍未在真机上验证的部分：复制/移动进度界面、回收站各界面、哈希与压缩包对话框、编辑器的保存路径。
+
+> 本文件、`PROJECT.md` 以及 Release 说明均为中文；代码注释与单元测试名保持英文，
+> 因为它们是给编译器和测试框架看的。
 
 ---
 
-## 1. What is implemented
+## 1. 已实现的功能
 
-### P0 — project skeleton and browsing
+### P0 —— 工程骨架与浏览
 
-| Feature | Status | Notes |
+| 功能 | 状态 | 说明 |
 |---|---|---|
-| Gradle project, Kotlin, Compose, Material 3 | Done | Builds a debug APK |
-| Light / dark / follow-system theme | Done | Persisted; theme cycling from the drawer |
-| Two-layer top bar (path + statistics) | Done | `文件夹：N  文件：M  存储：used/total` from real data |
-| Dual-pane browsing, independent per pane | Done | Own path, history, selection, storage figures |
-| Single-pane mode for narrow screens | Done | Toggle from the bottom bar or overflow menu |
-| Real directory reading (normal storage) | Done | `java.nio` + `android.system.Os` |
-| Real directory reading via root shell | **Device-verified** | Root listing of `/` and `/data` on a KernelSU device; see §5 and §6 |
-| Navigate: in, up, back, forward, path entry | Done | History with forward-truncation |
-| Path navigator with clickable breadcrumbs | Done | Jump to any ancestor, copy path, type a path |
-| System back button | Done | Closes a dialog, then the drawer, then selection mode, then goes up a directory; only exits from the root |
-| `..` row at the top of each pane | Done | Matches the reference; the top bar's up button does the same |
-| Refresh | Done | Per pane |
-| Sorting: name / size / date / type, asc + desc | Done | Unknown values always sort last |
-| Filtering: name, extension, kind | Done | Reports how many entries it hid |
-| Hidden-file toggle | Done | Persisted; reflected in the top bar |
-| Multi-select, select all, invert | Done | Long-press or tap in selection mode |
-| File action menu | Done | Unimplemented entries are disabled and labelled |
-| Properties dialog | Done | Reads real permissions, owner, group, uid/gid |
-| Permission editor (rwx matrix + octal) | Done | Applying it is P2, now implemented |
-| Create folder / create file | Done | Verified by re-reading the path |
-| Rename | Done | Rejects invalid names, refuses to overwrite |
-| Bookmarks, home directory | Done | Persisted |
-| Swap panes | Done | Re-reads both panes afterwards |
-| Root capability detection | **Device-verified** | Real `su` probe reaching KernelSU, never a file-existence check |
+| Gradle 工程、Kotlin、Compose、Material 3 | 完成 | 能产出 debug APK |
+| 浅色 / 深色 / 跟随系统 | 完成 | 会持久化，侧边栏可循环切换 |
+| 双层顶栏（路径 + 统计） | 完成 | `文件夹：N  文件：M  存储：已用/总量`，数据都来自真实读取 |
+| 双栏浏览，两栏互不干扰 | 完成 | 各自有路径、历史、选中态与容量数值 |
+| 窄屏单栏模式 | 完成 | 底栏或更多菜单里切换 |
+| 读取真实目录（普通存储） | 完成 | `java.nio` + `android.system.Os` |
+| 通过 root shell 读取目录 | **真机验证** | 在 KernelSU 设备上列出了 `/` 与 `/data`，见 §5、§6 |
+| 导航：进入 / 上级 / 后退 / 前进 / 输入路径 | 完成 | 历史记录，前进分支会被截断 |
+| 可点击的面包屑路径导航 | 完成 | 跳任意上级、复制路径、手输路径 |
+| 系统返回键 | 完成 | 依次：关对话框 → 关侧边栏 → 退出选择态 → 上一级；只有到根目录才退出应用 |
+| 每栏顶部的 `..` 行 | 完成 | 与参考实现一致；顶栏的上一级按钮效果相同 |
+| 刷新 | 完成 | 按栏刷新 |
+| 排序：名称 / 大小 / 日期 / 类型，升降序 | 完成 | 未知值永远排在最后 |
+| 过滤：名称、扩展名、类型 | 完成 | 会如实报告隐藏了多少条 |
+| 隐藏文件开关 | 完成 | 会持久化，顶栏计数同步变化 |
+| 多选、全选、反选 | 完成 | 长按进入选择态，或在选择态下点击 |
+| 文件操作菜单 | 完成 | 未实现的条目会置灰并标注 |
+| 属性对话框 | 完成 | 读真实权限、属主、属组、uid/gid |
+| 权限编辑器（rwx 矩阵 + 八进制） | 完成 | 应用属于 P2，现已实现 |
+| 新建文件夹 / 新建文件 | 完成 | 创建后回读校验 |
+| 重命名 | 完成 | 拒绝非法名称，拒绝覆盖已存在的目标 |
+| 书签、主目录 | 完成 | 会持久化 |
+| 交换两栏 | 完成 | 交换后重新读取两栏 |
+| root 能力探测 | **真机验证** | 真实 `su` 探测并到达 KernelSU，**绝不用"文件是否存在"判断** |
 
-### P1 — real file operations and the recycle bin
+### P1 —— 真实文件操作与回收站
 
-| Feature | Status | Notes |
+| 功能 | 状态 | 说明 |
 |---|---|---|
-| Recursive copy | Done | File-by-file with per-chunk progress |
-| Recursive move | Done | Rename when on one volume, copy+delete across volumes |
-| Pre-flight plan: size, file count, conflicts, free space | Done | Refuses a doomed transfer before writing |
-| Conflict handling: ask / overwrite / skip / keep-both | Done | Default is to ask; the dialog explains what each choice destroys |
-| Cancel a running transfer | Done | Cooperative, at chunk boundaries; reports an accurate partial count |
-| Partial-failure reporting | Done | Distinguishes full success, partial success, cancellation, refusal |
-| Progress UI (current file, bytes, throughput, failures) | Done | Task strip above the bottom bar, never covers the list |
-| Cross-pane copy / move | Done | Source = focused pane's selection, destination = the other pane |
-| Recycle bin | Done | Index-backed, so restore knows where a file came from |
-| Restore from the bin | Done | Refuses to overwrite newer data at the original path |
-| Permanent delete | Done | Per item, with confirmation |
-| Empty the bin (all / older than 7 days / larger than 10 MB) | Done | Items that fail to delete stay listed |
-| Trash index reconciliation | Done | Drops records whose payload vanished |
-| Search: current directory, or recursive | Done | Root-aware; streams results as they are found |
-| Search filters: name, extension, category, hidden | Done | Reuses the file-list filter so both behave identically |
-| Search cancellation and run-away guards | Done | Stops on request; caps results and says the list is incomplete |
-| Unit tests | Done | 99 tests for P0 + P1 |
+| 递归复制 | 完成 | 逐文件、逐块报告进度 |
+| 递归移动 | 完成 | 同卷用 rename，跨卷走"复制 + 删除" |
+| 预检计划：大小、文件数、冲突、可用空间 | 完成 | 注定失败的传输在**写任何字节之前**就被拒绝 |
+| 冲突处理：询问 / 覆盖 / 跳过 / 保留两者 | 完成 | 默认询问；对话框会说明每个选择会毁掉什么 |
+| 取消进行中的传输 | 完成 | 协作式取消，在分块边界生效；如实报告已完成的部分 |
+| 部分失败如实上报 | 完成 | 区分完全成功、部分成功、已取消、被拒绝 |
+| 进度界面（当前文件、字节、速率、失败项） | 完成 | 底栏上方的任务条，**不遮挡列表** |
+| 跨栏复制 / 移动 | 完成 | 来源 = 焦点栏的选中项，目标 = 另一栏 |
+| 回收站 | 完成 | **索引驱动**，所以还原时知道它原本在哪 |
+| 从回收站还原 | 完成 | 若原路径已被更新的数据占用，**拒绝还原**而不是覆盖 |
+| 永久删除 | 完成 | 逐项、带二次确认 |
+| 清空回收站（全部 / 7 天前 / 大于 10MB） | 完成 | 删除失败的项**仍然留在列表里** |
+| 回收站索引校准 | 完成 | 丢了实体的记录会被清掉 |
+| 搜索：当前目录或递归 | 完成 | 支持 root；结果流式返回 |
+| 搜索过滤：名称、扩展名、类别、隐藏 | 完成 | 与文件列表共用同一套过滤，行为一致 |
+| 搜索取消与失控保护 | 完成 | 可随时停止；命中上限会明说"结果不完整" |
+| 单元测试 | 完成 | P0 + P1 共 100 个 |
 
-### P2 — root filesystem, permissions and ownership
+### P2 —— root 文件系统、权限与属主
 
-| Feature | Status | Notes |
+| 功能 | 状态 | 说明 |
 |---|---|---|
-| `chmod` through the root shell | **Implemented, not device-verified** | Every path passes through `ShellQuote` |
-| **Verification by re-reading** | **Implemented, not device-verified** | An exit code of 0 is never sufficient |
-| `chown` (owner and/or group) | **Implemented, not device-verified** | Names or numeric ids |
-| Recursive `-R` apply for both | **Implemented, not device-verified** | Off by default; the dialog warns about the cost |
-| uid/gid to name resolution | **Implemented, not device-verified** | Via the device's own account database (`id`) |
-| Read-only partition handling | Done | Reported as such; **no remount is ever attempted** |
-| Sensitive-path confirmation | Done | `/system`, `/vendor`, `/data/adb`, `/metadata`, and more |
-| Path and id validation before exec | Done | Relative paths, `/`, NUL bytes, shell metacharacters refused |
-| Special bits (setuid/setgid/sticky) | Done | Compared on the numeric mode, not the 3-digit form |
-| Unit tests | Done | 30 tests for the change rules alone |
+| 通过 root shell 执行 `chmod` | **已实现，真机已验证** | 每个路径都过 `ShellQuote` |
+| **回读校验** | **已实现，真机已验证** | 退出码 0 永远不足以判定成功 |
+| `chown`（属主和/或属组） | **已实现，真机已验证** | 支持名字或数字 id |
+| 两者的递归 `-R` | **已实现，真机已验证** | 默认关闭；对话框会提示代价 |
+| uid/gid 反查名字 | **已实现，真机已验证** | 走设备自己的账号库（`id`） |
+| 只读分区处理 | 完成 | 如实报"只读"；**永不尝试 remount** |
+| 敏感路径二次确认 | 完成 | `/system`、`/vendor`、`/data/adb`、`/metadata` 等 |
+| 执行前校验路径与 id | 完成 | 拒绝相对路径、`/`、NUL 字节、shell 元字符 |
+| 特殊位（setuid/setgid/sticky） | 完成 | 按**数字模式**比较，不用三位形式 |
+| 单元测试 | 完成 | 仅权限变更规则就有 30 个 |
+| **批量改权限** | 完成，未真机验证 | 扫选多项后底栏「权限」，一套权限逐项应用并逐项回读校验 |
 
-### P3 — professional tools
+### P3 —— 专业工具
 
-| Feature | Status | Notes |
+| 功能 | 状态 | 说明 |
 |---|---|---|
-| Hashing engine (MD5 / SHA-1 / SHA-256) | Done, tested | 21 tests, verified against published test vectors |
-| Single-pass multi-algorithm hashing | Done, tested | Reads the file once, not once per algorithm |
-| Hash progress, cancellation, real-byte reporting | Done, tested | Chunked, so a multi-gigabyte file can be stopped |
-| Checksum comparison against a pasted value | Done, tested | Case- and separator-insensitive; malformed input is distinguished from a mismatch |
-| Archive engine: ZIP create + extract | Done, tested | `java.util.zip`, so no third-party code on the main extraction path |
-| Archive engine: TAR / TAR.GZ / BZIP2 / XZ extract | Done, tested | Through Commons Compress |
-| **Zip Slip defence** | Done, tested | 8 tests: `..`, absolute, drive letters, backslashes, NUL, canonical backstop |
-| Archive conflict policy (skip / overwrite / rename) | Done, tested | Never destroys unless overwrite was explicitly chosen |
-| Archive progress and cancellation | Done, tested | A cancelled compress deletes its half-written output |
-| Text file engine: UTF-8 + GB18030 fallback | Done, tested | 31 tests |
-| Text file engine: newline detection (LF/CRLF/CR) | Done, tested | Normalised in one pass, so CRLF is not doubled |
-| Text file engine: BOM preservation | Done, tested | A plain UTF-8 file is never silently given a BOM |
-| Text file engine: binary refusal | Done, tested | NUL byte, or a high control-character ratio |
-| Text file engine: large-file limit with real numbers | Done, tested | Reports the size and the limit |
-| Text file engine: atomic save with backup | Done, tested | Backup first, temp file then replace; no partial overwrite |
-| Text file engine: search and replace | Done, tested | Literal replacement, no regex or `$1` interpretation |
-| **Hash dialog in properties** | Done | Reachable from 属性 and the long-press menu; progress, stop, copy, paste-to-compare |
-| **Archive dialogs (compress / extract)** | Done | Format and name for compress; target and conflict choice for extract |
-| **Editor screen** | Done | Reachable from 属性 → 编辑 and the action menu; encoding/BOM/line-ending aware, search and replace, unsaved-change guard |
-| **Installed apps** | Done | List with icons, search, sort, system/user filter, detail dialog, export APK |
-| **Terminal emulator** | Done | Persistent `sh`/`su` session, real stdout and exit status, stop, history; framing verified on device |
-| Encrypted archives (zip password) | Not supported | Detected and reported, not silently mis-extracted |
-| 7z / RAR extraction | Not supported | Marked as such in the format table rather than failing late |
+| 哈希引擎（MD5 / SHA-1 / SHA-256） | 完成，有测试 | 21 个测试，与公开测试向量核对过 |
+| 单遍多算法哈希 | 完成，有测试 | 文件只读一遍，不是每个算法读一遍 |
+| 哈希进度、取消、真实字节数 | 完成，有测试 | 分块计算，几十 GB 的文件也能停下 |
+| 与粘贴值比对校验和 | 完成，有测试 | 大小写与分隔符不敏感；区分"格式错"与"不匹配" |
+| 压缩包引擎：ZIP 创建 + 解压 | 完成，有测试 | 用 `java.util.zip`，主解压路径上没有第三方代码 |
+| 压缩包引擎：TAR / TAR.GZ / BZIP2 / XZ 解压 | 完成，有测试 | 经 Commons Compress |
+| **Zip Slip 防护** | 完成，有测试 | 8 个测试：`..`、绝对路径、盘符、反斜杠、NUL、canonical 兜底 |
+| 压缩包冲突策略（跳过 / 覆盖 / 重命名） | 完成，有测试 | 除非明确选了覆盖，否则绝不毁数据 |
+| 压缩包进度与取消 | 完成，有测试 | 取消压缩会删掉写了一半的产物 |
+| 文本引擎：UTF-8 + GB18030 回退 | 完成，有测试 | 31 个测试 |
+| 文本引擎：换行风格识别（LF/CRLF/CR） | 完成，有测试 | 一遍归一化，不会把 CRLF 变成双倍 |
+| 文本引擎：BOM 保留 | 完成，有测试 | 无 BOM 的 UTF-8 文件**永远不会**被悄悄加上 BOM |
+| 文本引擎：二进制拒绝 | 完成，有测试 | NUL 字节，或控制字符比例过高 |
+| 文本引擎：大文件上限（带真实数字） | 完成，有测试 | 会同时报告文件大小和上限 |
+| 文本引擎：带备份的原子保存 | 完成，有测试 | 先备份，写临时文件再替换；不存在半截覆盖 |
+| 文本引擎：查找与替换 | 完成，有测试 | 字面替换，不解释正则或 `$1` |
+| **属性里的哈希对话框** | 完成 | 从「属性」或长按菜单进入；进度、停止、复制、粘贴比对 |
+| **压缩包对话框（压缩 / 解压）** | 完成 | 压缩选格式与名字；解压选目标与冲突策略 |
+| **编辑器界面** | 完成 | 从「属性 → 编辑」或操作菜单进入；识别编码/BOM/换行，查找替换，未保存改动保护 |
+| **已安装应用** | 完成 | 列表带图标，可搜索、排序、按系统/用户过滤，详情对话框，导出 APK |
+| **终端模拟器** | 完成 | 常驻 `sh`/`su` 会话，真实 stdout 与退出码，可停止，有历史；分帧已在真机验证 |
+| 加密压缩包（zip 密码） | 不支持 | 会识别并如实报告，不会静默解错 |
+| 7z / RAR 解压 | 不支持 | 在格式表里就标注为不支持，而不是拖到失败才报 |
+
+### 增强（P3 之后）
+
+| 功能 | 状态 | 说明 |
+|---|---|---|
+| 应用更名为 **MYWxy** | 完成 | 界面、标题栏、关于页、启动器名称统一读 `strings.xml` 的 `app_name`，改名只需改一处 |
+| 关于页面 | 完成 | 侧边栏底部「版本 … · 关于」打开，显示名称、版本、构建号与一句话简介 |
+| **图片缩略图** | 完成 | 列表里的图片直接显示画面：只解 128px、RGB_565、按路径 LRU 缓存（绝不 recycle） |
+| **单击打开文本文件** | 完成 | `txt`/`json`/`xml`/`md`/`yaml`/代码等直接进编辑器；引擎先嗅探二进制，扩展名撒谎只会被诚实拒绝 |
+| **看图** | 完成 | 全屏查看，可捏合缩放、拖动平移（边界钳制）、一键重置；两遍解码避免大图 OOM |
+| **单击运行 shell 脚本** | 完成 | `sh` 系列弹出运行对话框：系统环境 / 扩展包环境 / ROOT 权限，可设置、编辑、执行，并回显退出码与输出 |
+| **左滑选中与范围多选** | 完成 | 在列表上**向左**滑动选中；手指继续上下移动即扩展成区间（如第 1 行滑到第 4 行），可累加、可拖回缩小 |
+| **批量删除 / 批量改权限** | 完成 | 选择态底栏新增「删除」「权限」，并显示「已选 N 项」；删除逐项回读校验并如实报成功/失败数 |
+| 交互动画 | 完成 | 行按压缩放反馈、增删条目淡出收缩与补位、进入/返回目录的方向性平移淡入 |
+| **扩展名识别表扩充到 213 项** | 完成 | 覆盖手机真会遇到的格式；`12.zip` 就是 ZIP 压缩包，`1.txt` 就是文本文档 |
+| **每种格式独立图标** | 完成 | 不再一个"大类"一个图标：PDF / Word / 表格 / 幻灯片 / 文本 / Markdown / 电子书 / 字幕 / 数据 / 数据库 / 网页 / JS / 终端 / 代码 / 压缩包 / 音频 / 视频 / 图片 / 字体 / 安卓包 / 动态库 各不相同 |
+| **root 授权跨进程保持** | 完成，**真机验证** | 在 root 管理器里授权一次后，**大退再开不再需要重新点授权** |
 
 ---
 
-## 2. Build
+## 2. 构建
 
-### Requirements
+### 环境要求
 
-- **JDK 17+** (JDK 21 was used here)
-- **Android SDK** with a platform and build-tools installed
-- Optional: a rooted device with USB debugging for the Root work
+- **JDK 17+**（本项目用 JDK 21）
+- **Android SDK**，且已安装对应平台与 build-tools
+- 可选：一台已 root、开了 USB 调试的设备（做 root 相关功能时需要）
 
-### Configure the SDK path
+### 配置 SDK 路径
 
-`local.properties` is machine-specific and git-ignored. Create it with your SDK location:
+`local.properties` 是本机专属文件，已被 git 忽略。按你的 SDK 位置新建：
 
 ```properties
 sdk.dir=C\:\\Android\\Sdk
 ```
 
-On the machine this was developed on the SDK lives at `H:\Android studio SDK` (the space is
-escaped). If your SDK differs, only this file changes.
+本项目开发机上 SDK 位于 `H:\Android studio SDK`（空格需要转义）。你的路径不同的话，
+只需要改这一个文件。
 
-### Build commands
+### 构建命令
 
-Windows:
+Windows：
 
 ```powershell
 .\gradlew.bat :app:assembleDebug
 ```
 
-macOS / Linux:
+macOS / Linux：
 
 ```bash
 ./gradlew :app:assembleDebug
 ```
 
-The APK is written to:
+APK 输出在：
 
 ```
 app/build/outputs/apk/debug/app-debug.apk
 ```
 
-Other useful tasks:
+其它常用任务：
 
 ```bash
-./gradlew :app:testDebugUnitTest    # 304 unit tests
-./gradlew :app:lintDebug            # Android lint
-./gradlew :app:assembleRelease      # unsigned release build
+./gradlew :app:testDebugUnitTest    # 355 个单元测试
+./gradlew :app:lintDebug            # 运行 Android lint
+./gradlew :app:assembleRelease      # 未签名的 release 构建
 ```
 
-### Repository configuration
+### 仓库镜像配置
 
-This project was built on a machine that cannot reach `dl.google.com` or `repo1.maven.org`
-directly, so `settings.gradle.kts` lists reachable mirrors first and keeps `google()` and
-`mavenCentral()` as fallbacks. On a machine with normal connectivity you may delete the
-mirror entries; the canonical repositories follow them.
+本项目是在**无法直连** `dl.google.com` 与 `repo1.maven.org` 的机器上开发的，因此
+`settings.gradle.kts` 把可达的镜像放在前面，同时保留 `google()` 与 `mavenCentral()` 作为兜底。
+网络正常的话可以删掉镜像条目，官方仓库就在它们后面。
 
-`gradle/wrapper/gradle-wrapper.properties` points the wrapper at a mirror distribution URL.
-To use the official one, change it to:
+`gradle/wrapper/gradle-wrapper.properties` 指向的是镜像分发包地址。想用官方的就改成：
 
 ```properties
 distributionUrl=https\://services.gradle.org/distributions/gradle-9.8.1-bin.zip
 ```
 
-### Toolchain versions actually used
+### 实际使用的工具链版本
 
-These are the versions in this checkout, and they are mutually compatible:
+以下版本共存于本仓库，且互相兼容：
 
-| Component | Version |
+| 组件 | 版本 |
 |---|---|
 | Android Gradle Plugin | 9.4.1 |
 | Gradle | 9.8.1 |
 | Kotlin | 2.4.21 |
 | Compose BOM | 2026.09.00 |
 | compileSdk / targetSdk | 37 / 36 |
-| minSdk | 26 (Android 8.0) |
+| minSdk | 26（Android 8.0） |
 | Build tools | 36.0.0 |
 
-**Two notes specific to AGP 9**, both of which will bite anyone upgrading this project:
+**两条 AGP 9 特有的坑**，谁升级这个项目谁都会踩：
 
-1. AGP 9 has **built-in Kotlin support**. Applying `org.jetbrains.kotlin.android` fails the
-   build. Only `org.jetbrains.kotlin.plugin.compose` is applied.
-2. `compileSdk` must match the installed platform directory. On the development machine the
-   only installed platform is `platforms/android-37.0`, so `compileSdk = 37`.
+1. AGP 9 **内置 Kotlin 支持**。再 apply `org.jetbrains.kotlin.android` 会导致构建失败，
+   本项目**只** apply `org.jetbrains.kotlin.plugin.compose`。
+2. `compileSdk` 必须与已安装的平台目录一致。开发机上只装了 `platforms/android-37.0`，
+   所以是 `compileSdk = 37`。
 
-The AndroidX versions pinned here (Compose BOM 2026.09.00, `core-ktx` 1.19.1, lifecycle
-2.11.0) publish Gradle metadata that **refuses to build with AGP below 9.1.0**, which is why
-the project is on AGP 9 rather than 8.x.
+这里锁定的 AndroidX 版本（Compose BOM 2026.09.00、`core-ktx` 1.19.1、lifecycle 2.11.0）
+发布的 Gradle 元数据**拒绝在 AGP 9.1.0 以下构建**，这也正是本项目停在 AGP 9 而不是 8.x 的原因。
 
 ---
 
-## 3. Architecture
+## 3. 架构
 
 ```
 app/src/main/java/io/rootexplorer/pro/
-├── RootExplorerApplication.kt      # manual DI container
-├── MainActivity.kt                 # thin shell: builds the ViewModel, hosts the screens
+├── RootExplorerApplication.kt      # 手写依赖容器
+├── MainActivity.kt                 # 薄壳：构造 ViewModel、承载各界面
 ├── core/
 │   ├── filesystem/
-│   │   ├── FileEntry.kt            # a listing entry; unknown fields are null, never faked
-│   │   ├── FsError.kt              # typed failures (not-found / denied / read-only / ...)
-│   │   ├── FsEngine.kt             # the filesystem interface + path normalisation
-│   │   ├── JavaFsEngine.kt         # this process's own credentials
-│   │   ├── RootFsEngine.kt         # a root shell (ls / stat / df)
-│   │   ├── SystemFileSystem.kt     # chooses the engine, exposes root status
-│   │   ├── StorageVolumes.kt       # StorageManager enumeration
-│   │   ├── FileSort.kt             # sorting + filtering
-│   │   └── FileTypeDetector.kt     # extension -> category / MIME / description
+│   │   ├── FileEntry.kt            # 一条列表项；未知字段为 null，绝不编造
+│   │   ├── FsError.kt              # 带类型的失败（不存在 / 无权限 / 只读 / …）
+│   │   ├── FsEngine.kt             # 文件系统接口 + 路径归一化
+│   │   ├── JavaFsEngine.kt         # 用本进程自己的凭据
+│   │   ├── RootFsEngine.kt         # 用 root shell（ls / stat / df）
+│   │   ├── SystemFileSystem.kt     # 选择引擎、对外暴露 root 状态
+│   │   ├── StorageVolumes.kt       # StorageManager 枚举
+│   │   ├── FileSort.kt             # 排序 + 过滤
+│   │   └── FileTypeDetector.kt     # 扩展名 -> 类别 / MIME / 描述（213 项）
+│   ├── image/ImageLoader.kt        # 看图与列表缩略图（两遍解码 + 采样 + 缓存）
+│   ├── script/ScriptRunner.kt      # 运行 shell 脚本 + 命令行构造（纯函数）
 │   ├── permissions/
-│   │   ├── LinuxPermission.kt      # rwx bits <-> symbolic <-> octal
-│   │   └── PermissionChanger.kt    # chmod / chown with mandatory read-back verification
+│   │   ├── LinuxPermission.kt      # rwx 位 <-> 符号 <-> 八进制
+│   │   └── PermissionChanger.kt    # chmod / chown，强制回读校验
 │   └── root/
-│       ├── RootShell.kt            # su subprocess + ShellQuote (injection safety)
-│       ├── RootStatus.kt           # the six root states
-│       └── RootAccess.kt           # the probe and its interpretation
+│       ├── RootShell.kt            # su 子进程 + ShellQuote（防注入）
+│       ├── RootStatus.kt           # root 的六种状态
+│       └── RootAccess.kt           # 探测与结果解读，含跨进程授权记忆
 ├── data/repository/
-│   ├── FileRepository.kt           # the UI's only entry point to the filesystem
-│   └── SettingsRepository.kt       # SharedPreferences-backed settings
+│   ├── FileRepository.kt           # UI 访问文件系统的唯一入口
+│   └── SettingsRepository.kt       # 基于 SharedPreferences 的设置
 ├── feature/
-│   ├── filebrowser/                # PaneState, FileBrowserUiState, ViewModel
-│   ├── properties/                 # properties dialog
-│   ├── permissioneditor/           # permission matrix, owner/group editor, octal parsing
-│   ├── search/                     # search engine, screen and view model
-│   └── trash/                      # recycle-bin screen
+│   ├── filebrowser/                # PaneState、FileBrowserUiState、ViewModel、左滑选区逻辑
+│   ├── properties/                 # 属性对话框
+│   ├── permissioneditor/           # 权限矩阵、属主/属组编辑、八进制解析
+│   ├── search/                     # 搜索引擎、界面与 ViewModel
+│   ├── image/                      # 看图界面与 ViewModel
+│   ├── script/                     # 脚本运行对话框
+│   ├── trash/                      # 回收站界面
+│   └── open/OpenableKind.kt        # 「打开」该做什么（纯函数）
 ├── service/fileoperation/
-│   ├── FileOperationsEngine.kt     # create / rename / delete, each verified by re-reading
-│   └── FileOperationEngine.kt      # recursive copy/move: plan, progress, cancel, conflicts
+│   ├── FileOperationsEngine.kt     # 新建 / 重命名 / 删除，逐个回读校验
+│   └── FileOperationEngine.kt      # 递归复制/移动：计划、进度、取消、冲突
 ├── service/taskmanager/
-│   └── TaskManager.kt              # the one foreground task, its progress and result
+│   └── TaskManager.kt              # 唯一前台任务及其进度与结果
 ├── service/trash/
-│   └── TrashRepository.kt          # the recycle bin: index, restore, purge, cleanup rules
+│   └── TrashRepository.kt          # 回收站：索引、还原、清空、清理规则
 ├── ui/
-│   ├── components/                 # top bar, panes, drawer, dialogs, bottom bar, task bar
-│   └── theme/                      # colours, typography, ThemeMode
-└── util/Formatter.kt               # sizes, capacities, dates
+│   ├── components/                 # 顶栏、文件栏、抽屉、对话框、底栏、任务条
+│   └── theme/                      # 配色、字体、主题模式、CompositionLocal
+└── util/Formatter.kt               # 大小、容量、日期格式化
 ```
 
-Plus `app/src/test/java/...` with the unit tests.
+另有 `app/src/test/java/...` 存放单元测试。
 
-### Design decisions worth stating
+### 几条值得明说的设计决策
 
-**Failures are never rendered as an empty folder.** `FsError` distinguishes not-found,
-permission-denied, root-required, not-a-directory, read-only, I/O error and symlink loop, and
-the pane shows the specific message with a retry action. A failed listing clears the file
-list rather than leaving the previous directory's contents on screen under a new path.
+**失败绝不渲染成空文件夹。** `FsError` 区分不存在、无权限、需要 root、不是目录、只读、
+I/O 错误与符号链接成环，对应栏会显示具体原因并给出重试入口。列表读取失败时会**清空**列表，
+而不是把上一个目录的内容留在新路径下。
 
-**Unknown data stays unknown.** Permission bits, uid/gid, owner names, access and creation
-times and file sizes are all nullable. Android's FUSE layer over `/sdcard` does not expose
-POSIX permissions, and a root `ls` listing does not carry a reliable timestamp — those render
-as `未知` instead of a plausible-looking default. In particular nothing defaults to `root`.
+**未知的数据就保持未知。** 权限位、uid/gid、属主名、访问与创建时间、文件大小全部可空。
+Android 在 `/sdcard` 上的 FUSE 层不暴露 POSIX 权限，而 root `ls` 的输出里也没有可靠的时间戳 ——
+这些一律显示成 `未知`，而不是给一个看起来合理的默认值。**尤其是任何字段都不会默认为 `root`。**
 
-**A transfer is planned before it writes anything.** `FileOperationEngine.planCopy` totals the
-bytes, counts the files, lists every name collision and checks free space. A copy that cannot
-fit, or that would recurse into itself, is refused with a reason instead of half-running. The
-destination-inside-source check uses canonical paths, so it also sees through Android's
-`/sdcard` to `/storage/emulated/0` symlink, which a naive string comparison would miss.
+**传输在写任何东西之前先做计划。** `FileOperationEngine.planCopy` 会累计字节数、统计文件数、
+列出每一处重名并检查可用空间。装不下、或会递归进自己的复制，都带着原因**直接被拒绝**，
+而不是跑到一半才失败。判断"目标在来源内部"用的是 canonical 路径，所以它能看穿 Android 上
+`/sdcard` 到 `/storage/emulated/0` 的符号链接 —— 朴素的字符串比较会漏掉这种情况。
 
-**A partial result is never reported as success.** `OperationOutcome` distinguishes
-`Completed` (with a possibly non-empty failure list), `Cancelled` and `Rejected`, and the task
-bar renders those differently. A cancelled copy says how much it managed to do.
+**部分结果绝不报成成功。** `OperationOutcome` 区分 `Completed`（可能带非空失败清单）、
+`Cancelled` 与 `Rejected`，任务条对三者显示不同状态。被取消的复制会说明它完成了多少。
 
-**A permission change is verified by re-reading, never by an exit code.** `PermissionChanger`
-runs `chmod`/`chown`, then reads the path back and compares. A command that exits 0 while the
-attributes are unchanged is reported as *not applied*, because that is what actually happens
-on read-only partitions and some FUSE-backed mounts. Special bits are compared on the numeric
-mode, so a `chmod 4755` whose setuid bit did not stick is a reported failure, not a success.
+**权限变更靠回读校验，绝不靠退出码。** `PermissionChanger` 执行 `chmod`/`chown` 后会把路径读回来比对。
+命令退出 0 但属性没变，会被判为**未生效** —— 因为只读分区和某些 FUSE 挂载上确实就是这样。
+特殊位按**数字模式**比较，所以 `chmod 4755` 而 setuid 位没粘上时，报的是失败而不是成功。
 
-**Read-only partitions are reported, never remounted.** The brief forbids trying to remount
-system partitions, so the app says the filesystem is read-only and stops.
+**只读分区如实报告，永不 remount。** 需求明确禁止尝试重新挂载系统分区，所以应用只会
+告诉你这个文件系统是只读的，然后停下。
 
-**The recycle bin is an index, not a directory.** `index.tsv` records where each item came
-from; the trash directory alone cannot tell you that, so a bin built by listing directories
-could never restore anything. File names containing tabs or newlines are escaped, because both
-are legal on Linux and would otherwise corrupt every record after the offending one.
+**回收站是一个索引，不是一个目录。** `index.tsv` 记录每一项从哪来；光靠回收站目录本身
+无从得知出处，所以"列目录式"的回收站永远无法还原任何东西。文件名里的制表符与换行会被转义，
+因为这两者在 Linux 上都是合法字符，否则会毁掉其后所有记录。
 
-**Search says when it is incomplete.** A recursive search reports the locations it could not
-read (so "not found" is never confused with "could not look"), and hitting the result cap marks
-the list as truncated rather than presenting a partial answer as the whole one. Leaving the
-screen cancels the walk, which matters because a root search is a privileged `find`.
+**搜索会说明自己何时不完整。** 递归搜索会报告读不了的位置（所以"没找到"永远不会被混淆成
+"没能去看"），命中结果上限时会把列表标记为已截断，而不是把部分答案当成全部答案。
+离开界面会取消这次遍历 —— 这一点很重要，因为带 root 的搜索本质上是一次特权 `find`。
 
-**The bin sits on the data's own volume when root is available.** With root it is
-`/data/media/0/.RootExplorerPro/trash`, so trashing is a rename rather than a multi-gigabyte
-copy; without root it falls back to the app's private directory, where a cross-volume move is
-refused rather than silently turned into a slow copy.
+**有 root 时回收站和数据同卷。** 有 root 时它在 `/data/media/0/.RootExplorerPro/trash`，
+于是"移入回收站"是一次 rename，而不是几十 GB 的复制；没有 root 时回退到应用私有目录，
+此时跨卷移动会被**拒绝**，而不是悄悄变成一次缓慢的复制。
 
 ---
 
-## 4. Safety measures
+## 4. 安全措施
 
-- **No string concatenation into shell commands.** Every dynamic value passes through
-  `ShellQuote`, which uses POSIX single quoting and closes/reopens around embedded quotes.
-  13 unit tests cover spaces, `$( )`, backticks, `;`, `&&`, `|`, `>`, `<`, `*`, `?`, `$VAR`,
-  newlines and CJK filenames.
-- **`su -c <command>` is passed as a single argument**, so nothing re-parses it on the way in.
-- **Root is never probed at launch.** Probing triggers the root manager's prompt, so it only
-  happens on an explicit user action; a refusal is cached instead of retried.
-- **Mutations are verified.** Every create / rename / delete re-reads the path afterwards and
-  reports `verified = true/false`; every `chmod`/`chown` re-reads the attributes.
-- **No silent overwrite.** Rename refuses when the target exists; restoring from the recycle
-  bin refuses when the original path is occupied; copy only overwrites when the user chose it.
-- **Recursive delete requires explicit consent.** The checkbox is disabled for files and
-  mandatory for directories; the confirm button stays disabled until it is ticked.
-- **Sensitive locations need a second confirmation.** Changing anything under `/system`,
-  `/vendor`, `/product`, `/system_ext`, `/data/adb`, `/data/misc`, `/metadata` or
-  `/data/system` first shows the risk and the consequence.
-- **Input is validated before any command runs.** Relative paths, the filesystem root, NUL
-  bytes and shell metacharacters in an owner/group name are refused up front.
-- **The app never remounts system partitions.**
-- Log-free: no authorization tokens or command contents are written to logs.
+- **绝不把字符串拼进 shell 命令。** 每个动态值都过 `ShellQuote`：POSIX 单引号引用，并在
+  内部引号处闭合再重开。13 个单元测试覆盖空格、`$( )`、反引号、`;`、`&&`、`|`、`>`、`<`、
+  `*`、`?`、`$VAR`、换行与中文文件名。
+- **`su -c <命令>` 整体作为单个参数传入**，所以中间没有任何环节会重新解析它。
+- **启动时不探测 root，只有一个例外。** 跑 `su` 正是让 root 管理器弹出授权框的动作，
+  所以常规情况下探测只在用户明确操作时发生，被拒绝也会缓存而不是反复重试。
+  例外是**用户在之前的运行里已经授权过**：root 管理器按应用保存该决定，所以重探会静默完成，
+  上一次的授权能挺过进程被杀。**记忆中的授权永远不被信任** —— root 仍然只在探测真的同意之后
+  才被报告；而记忆中的授权一旦失效会被清除，于是下次启动不再重探，也就不会反复弹框。
+- **变更必须校验。** 每次新建 / 重命名 / 删除之后都会回读该路径并报告 `verified = true/false`；
+  每次 `chmod`/`chown` 都会回读属性。
+- **没有静默覆盖。** 重命名在目标已存在时拒绝；从回收站还原时若原路径被占用则拒绝；
+  复制只在用户明确选择时覆盖。
+- **递归删除需要显式同意。** 对文件该勾选框不可用、对目录则必须勾选；未勾选时确认按钮保持禁用
+  （且按钮颜色会跟随可用状态变化，不会出现"看着能点、点了没反应"的死按钮）。
+- **敏感位置需要二次确认。** 改动 `/system`、`/vendor`、`/product`、`/system_ext`、`/data/adb`、
+  `/data/misc`、`/metadata`、`/data/system` 下的任何内容，都会先显示风险与后果。
+- **任何命令执行之前先校验输入。** 相对路径、文件系统根、NUL 字节，以及属主/属组里的
+  shell 元字符，一律在入口处拒绝。
+- **应用永不 remount 系统分区。**
+- **无日志。** 不会把授权令牌或命令内容写进日志。
 
 ---
 
-## 5. Testing
+## 5. 安装与测试
 
-### Unit tests (no device needed)
+### 安装到设备
+
+```bash
+adb install -r MYWxy-0.5.0-debug.apk
+adb shell am start -n io.rootexplorer.pro.debug/io.rootexplorer.pro.MainActivity
+```
+
+注意 debug 构建的包名带 `.debug` 后缀，所以组件名和 FileProvider authority 都带它。
+这是 debug 包，可以与 release 包并存安装。
+
+### 单元测试（不需要设备）
 
 ```bash
 ./gradlew :app:testDebugUnitTest
 ```
 
-304 tests, all passing:
+**355 个测试，23 个测试类，全部通过：**
 
-| Suite | Tests | Covers |
+| 测试类 | 用例 | 覆盖内容 |
 |---|---|---|
-| `LinuxPermissionTest` | 17 | 644/755/600/777/000, special bits, round trips, rejection of invalid input |
-| `ShellQuoteTest` | 13 | command-injection safety |
-| `FsEnginePathTest` | 14 | path normalisation, `..`, `//`, unicode, newlines |
-| `LsLineParsingTest` | 9 | `ls -la` parsing against the device's verbatim output |
-| `RootListingIntegrationTest` | 6 | end-to-end root listing: directories present, no entry titled with a link target |
-| `SortAndFilterTest` | 17 | directory-first ordering, nulls-last in both directions, filters |
-| `FileOperationPlanTest` | 24 | copy/move planning, conflicts, policies, real byte-for-byte copies, moves, symlink loops |
-| `TrashIndexCodecTest` | 14 | tab/newline/backslash-proof recycle-bin index round trips |
-| `PermissionChangerTest` | 30 | the verification rule, special bits, name/uid equivalence, validation, sensitive paths |
-| `SearchEngineTest` | 19 | recursion vs single directory, filters, hidden files, partial failures, batching, the result cap |
-| `HashEngineTest` | 21 | published MD5/SHA-1/SHA-256 vectors, multi-algorithm agreement, verification |
-| `ArchiveEngineTest` | 30 | round trips, Zip Slip attacks, conflict policies, corrupted input |
-| `TextFileEngineTest` | 31 | encodings, BOM, newline styles, binary refusal, atomic save, replace |
-| `InstalledAppLogicTest` | 22 | app filter/sort rules, export naming, split-APK handling |
-| `ShellSessionFramingTest` | 20 | terminal command framing, exit-status parsing, output caps |
-| `PermissionDeviceEvidenceTest` | 17 | chmod/chown values measured on the device: special bits, four-digit octal, read-only fs, bad user |
+| `LinuxPermissionTest` | 17 | 644/755/600/777/000、特殊位、往返转换、非法输入拒绝 |
+| `ShellQuoteTest` | 13 | 命令注入安全 |
+| `FsEnginePathTest` | 14 | 路径归一化、`..`、`//`、unicode、换行 |
+| `LsLineParsingTest` | 9 | 按设备原始输出解析 `ls -la` |
+| `RootListingIntegrationTest` | 6 | 端到端 root 列目录：目录必须在列表里，且没有条目以链接目标作名字 |
+| `SortAndFilterTest` | 17 | 目录优先、升降序下 null 都排最后、过滤器 |
+| `FileOperationPlanTest` | 25 | 复制/移动计划、冲突、策略、真实的逐字节复制与移动、符号链接成环 |
+| `TrashIndexCodecTest` | 14 | 回收站索引对制表符/换行/反斜杠的往返安全 |
+| `PermissionChangerTest` | 30 | 校验规则、特殊位、名字与 uid 等价性、输入校验、敏感路径 |
+| `SearchEngineTest` | 19 | 递归 vs 单目录、过滤、隐藏文件、部分失败、分批、结果上限 |
+| `HashEngineTest` | 21 | 公开的 MD5/SHA-1/SHA-256 向量、多算法一致性、校验 |
+| `ArchiveEngineTest` | 30 | 往返、Zip Slip 攻击、冲突策略、损坏输入 |
+| `TextFileEngineTest` | 31 | 编码、BOM、换行风格、二进制拒绝、原子保存、替换 |
+| `InstalledAppLogicTest` | 22 | 应用过滤/排序规则、导出命名、分包 APK 处理 |
+| `ShellSessionFramingTest` | 20 | 终端命令分帧、退出码解析、输出上限 |
+| `PermissionDeviceEvidenceTest` | 17 | 真机实测的 chmod/chown 数值：特殊位、四位八进制、只读文件系统、错误用户名 |
+| `FormatterTest` | 13 | 大小/日期/名称/权限的格式化文本 —— 文件列表每一行都走这条路径 |
+| `RootAccessTest` | 6 | root 探测的决策规则：从没授权过的设备启动时一条命令都不执行、记忆的授权静默重探、失效的授权必须被清除 |
+| `ImageLoaderTest` | 4 | 图片采样率算法 —— 它决定实际分配多少像素，写错就是 OutOfMemoryError |
+| `OpenableKindTest` | 10 | 「打开」的判定：目录/指向目录的软链接 → 导航、图片 → 看图、sh 系列 → 运行弹窗、文本 → 编辑器、可解析的压缩包 → 浏览、二进制文档如实报 unsupported |
+| `ScriptRunnerTest` | 5 | 脚本执行的命令行构造：系统/扩展包环境的前缀、扩展包无目录时不加前缀、含空格与单引号的恶意路径必须留在一个参数里 |
+| `FileTypeCoverageTest` | 4 | 扩展名识别表的覆盖：`12.zip` 是压缩包、`1.txt` 是文档、大小写无关、26 个常见格式逐个断言（缺一个就构建失败，而不是静默变成"未知"） |
+| `SwipeSelectionTest` | 8 | 左滑选中的两个判定：横竖方向与阈值的边界（正好达标算选中）、区间在上下两个方向都成立 |
 
-### Bugs the tests caught
+### 单元测试抓到的 bug
 
-Five real bugs so far, none of which were visible from reading the code:
-1. **A crash on launch.** The manifest declared `.RootExplorerApp` while the class is
-   `RootExplorerApplication`, so the app died immediately at startup. Found by lint, fixed,
-   and re-verified by dumping the built APK's manifest.
-2. **A wrong permission display.** `4644` — setuid *without* execute, shown by `ls` as
-   `rwSr--r--` — was parsed with the execute bit set, so the permission editor would have
-   displayed `rwxr--r--` for a file that is not executable by its owner.
-3. **A wrong result count.** A completed copy reported `itemsCopied = 0` while the bytes had
-   in fact been written. The increment sat inside the move-only branch, so a plain copy
-   reported no work done.
-4. **A false success on a security-relevant change.** Verification compared the three-digit
-   octal, which *drops* setuid/setgid/sticky. A `chmod 4755` whose setuid bit silently failed
-   to stick would have been reported as applied. Now compared on the numeric mode.
-5. **Validation defeated by normalisation.** `changeMode` normalised the path before
-   validating it, and normalisation prepends `/`, so a relative path was silently turned into
-   an absolute one and the "must be absolute" rule never fired.
+到目前为止 5 个，全都是**光读代码看不出来**的：
 
-Two test expectations were also wrong and were corrected rather than the code:
-`parentOf("/data/adb/..")` correctly answers about the normalised path, and `0xFFFFF333` has
-low 12 bits `0o463`, not `0o333`.
+1. **启动即崩溃。** manifest 声明的是 `.RootExplorerApp`，而实际类名是
+   `RootExplorerApplication`，于是应用一启动就死。lint 抓到，修好后 dump 构建产物
+   manifest 复核过。
+2. **权限显示错误。** `4644` —— setuid 但**没有执行位**，`ls` 显示为 `rwSr--r--`
+   —— 被解析成了带执行位，于是权限编辑器会把一个属主不可执行的文件显示成 `rwxr--r--`。
+3. **结果计数错误。** 复制完成后报告 `itemsCopied = 0`，而字节其实已经写出去了。
+   那个自增语句被放在只有"移动"才走的分支里，所以纯复制报告"什么都没做"。
+4. **一个安全相关的假成功。** 校验比较的是三位八进制，而它会**丢掉** setuid/setgid/sticky。
+   一次 setuid 位悄悄没粘上的 `chmod 4755`，会被报告成"已应用"。现在按数字模式比较。
+5. **归一化打败了校验。** `changeMode` 在校验**之前**先归一化路径，而归一化会补上 `/`，
+   于是相对路径被悄悄变成了绝对路径，"必须是绝对路径"这条规则永远触发不了。
 
-### Bugs only the real device exposed
+另外有两条**测试期望本身写错了**（改的是测试而不是代码）：`parentOf("/data/adb/..")`
+回答的是归一化之后的路径，这是对的；而 `0xFFFFF333` 的低 12 位是 `0o463` 而不是 `0o333`。
 
-Connecting the phone found three more, and they are the reason this section exists: all three
-passed every unit test, because the tests stopped at the shell boundary.
+### 只有真机才暴露的 bug
 
-6. **The root listing showed nothing but symlinks, each titled with its target.**
-   `line.split(Regex("\\s+"), limit = 9)` does **not** mean "eight columns plus the rest" — with
-   eight metadata columns it consumes all nine slots. So the name landed in field 7, field 8 held
-   a symlink's `-> target`, and directories (which have no target and therefore only eight fields)
-   failed the `parts.size < 9` check and were **discarded entirely**. The visible effect: `/`
-   listing only symlinks, `/storage/emulated/0` and `/data` appearing empty. The parser now
-   locates the name by finding the end of the date/time columns, which handles both layouts and
-   preserves spaces in file names. `RootListingIntegrationTest` replays the device's verbatim
-   `ls -la /` output so this cannot regress silently.
+接上手机后又抓到 4 个，这正是本节存在的理由：**它们全都通过了单元测试** ——
+因为测试止步于 shell 边界。
 
-7. **Root search returned nothing.** It used `find … -exec stat`, and this device's toybox `find`
-   **rejects `-exec`, `-printf`, `-mindepth` and `-print0` at runtime even though its own `--help`
-   lists them** (`find: bad arg '-exec'`). The walk is now an iterative BFS over `ls`, which is
-   the one tool whose behaviour was verified end to end on the device.
+6. **root 列目录只显示符号链接，而且每条链接都以目标名当文件名。**
+   `line.split(Regex("\\s+"), limit = 9)` **并不**表示"八列 + 剩下的全部" —— 在有八个元数据列时，
+   它会把这九个槽位全部吃满。于是文件名落到了第 7 个字段，第 8 个字段装的是符号链接的
+   `-> 目标`，而目录（没有目标、因此只有八个字段）通不过 `parts.size < 9` 检查，被**整条丢弃**。
+   可见后果是：`/` 只列出符号链接，`/storage/emulated/0` 和 `/data` 看起来是空的。
+   现在的解析器通过定位日期/时间列的结束位置来找文件名，两种排布都能处理，也不怕文件名里有空格。
+   `RootListingIntegrationTest` 会把设备上 `ls -la /` 的原始输出回放一遍，防止这事悄悄回归。
+7. **root 搜索什么都搜不到。** 它用的是 `find … -exec stat`，而这台设备的 toybox `find`
+   **运行时拒绝 `-exec`、`-printf`、`-mindepth`、`-print0`，尽管它自己的 `--help` 里列着这些选项**
+   （`find: bad arg '-exec'`）。现在遍历改成基于 `ls` 的迭代式 BFS ——
+   那是唯一一个在设备上端到端验证过行为的工具。
+8. **"已授权 root" 仍然报权限不足，必须重启应用。** `activeEngine()` 每次请求只采样一次缓存的
+   root 状态，而启动那一刻状态是 `Unknown`，因为应用刻意不探测（探测会弹授权框）。
+   在那个窗口里发出的请求走应用自身 uid → 被拒 → 而缓存的 `Unknown` **不会被重新评估**，
+   于是**一直失败直到重启**。现在 `list`/`stat` 在 root-only 路径上会探测一次并重试；
+   `scan` 则在遍历**开始前**就决定引擎，避免把条目重复交给调用方。
+9. **`chmod` 永远无法应用 setuid/setgid/sticky。** `LinuxPermission` 有两个八进制取值器：
+   `octal`（四位，保留特殊位）与 `octalSimple`（`modeBits and 0x1FF`，**把它们掩掉**）。
+   `changeMode` 传给 `chmod` 的是 `octalSimple`，所以在权限编辑器里勾上 setuid 实际跑的是
+   `chmod 755` 而不是 `chmod 4755`，那位永远不会粘上。编辑器又雪上加霜：它显示和预填的都是三位值，
+   于是打开一个 `4755` 的文件看到的是 `755`，接受预填文本就悄悄清掉了特殊位 ——
+   而正上方的勾选框却还显示 setuid 是开着的。
+   这个 bug 是**靠量设备而不是读代码**发现的：设备上 `chmod 4755` 有效，且 `stat -c %a`
+   返回**四位**（`4755`、`2755`、`1755`）。后面这个事实同时也是"校验比较比对了正确的东西"的证明 ——
+   那个比较一旦出错，就是权限提升层面的假成功。修法是命令与编辑器都改用 `octal`；
+   `PermissionDeviceEvidenceTest` 把每个实测数字都钉住了。
 
-8. **"Granted root" still gave permission denied until the app was restarted.** `activeEngine()`
-   sampled the cached root status once per request, and at launch that status is `Unknown` because
-   the app deliberately does not probe (probing triggers the authorization prompt). A request
-   issued in that window ran as the app's own UID, was denied, and — because the cached status was
-   never re-evaluated — **kept failing until restart**. `list`/`stat` now probe and retry once on a
-   root-only path, and `scan` decides the engine before walking so no entry is emitted twice.
+另有一条真机发现，来自"在信任终端之前先验证它的分帧"：这台设备的 `printf` 能正确报告 `$?`
+（实测 `0` 与 `1`），多行输出分帧正确，且 `cd` 在同一个 root 会话内跨帧保持 ——
+所以终端的设计是**对着真实 shell 验证过的**，不是假设的。
 
-A fourth device-only finding, from checking the terminal's framing before trusting it: this
-device's `printf` correctly reports `$?` (verified `0` and `1`), multi-line output frames
-correctly, and `cd` persists across frames inside one root session — so the terminal's design was
-confirmed against the real shell rather than assumed.
+### 建议的手工验收顺序
 
-9. **`chmod` could never apply setuid/setgid/sticky.** `LinuxPermission` has two octal accessors:
-   `octal` (four digits, keeps the special bits) and `octalSimple` (`modeBits and 0x1FF`, which
-   **masks them off**). `changeMode` passed `octalSimple` to `chmod`, so ticking "setuid" in the
-   permission editor ran `chmod 755` instead of `chmod 4755` and the bit never landed. The editor
-   compounded it by displaying and pre-filling the three-digit value, so editing a `4755` file
-   showed `755` and accepting the pre-filled text silently cleared the bits — while the checkbox
-   directly above still read as setuid-on.
+1. **存储权限** —— 缺"所有文件访问权限"时会显示横幅，按钮会打开正确的设置页。
+   授权后确认 `/storage/emulated/0` 可浏览。
+2. **真实列表** —— 顶栏计数与目录内容一致。用
+   `adb shell ls -a /storage/emulated/0 | wc -l` 对照。
+3. **排序** —— 每个字段两个方向都试。大小或日期未知的条目在两个方向下都必须留在最后。
+4. **过滤** —— 应用过滤器，确认「已过滤 N」计数正确，清除后列表恢复。
+5. **隐藏文件** —— 切换开关，观察计数变化。
+6. **选择** —— 长按进入选择态，全选、反选、取消。
+7. **新建 / 重命名 / 删除** —— 各做一次，都应报告"已验证"的成功，刷新后与磁盘一致。
+8. **属性** —— 与 `adb shell stat -c '%A %a %U %G' <路径>` 对照。
+9. **权限编辑器** —— 对 644、755、600、777、4755、1775 逐一确认八进制、符号串与勾选框三者一致。
+10. **root** —— 点侧边栏的授权入口，批准弹框，然后打开 `/data/adb`。确认出现 ROOT 徽标、
+    侧边栏状态显示「已获得 Root」。
 
-   Found by measuring the device rather than by reading the code: `chmod 4755` works there and
-   `stat -c %a` reports **four** digits (`4755`, `2755`, `1755`). That second fact is also what
-   proves the verification comparison — the one that must never produce a privilege-escalation
-   false success — is comparing the right thing. Fixed by using `octal` for both the command and
-   the editor; `PermissionDeviceEvidenceTest` pins every measured figure.
+#### P1 手工验收
 
-### Installing on a device
+11. **跨栏复制** —— 左栏选几个文件，右栏导航到别的目录，按「复制」。观察任务条上的当前文件、
+    字节数、速率和取消按钮。**用重新读取目录来确认**文件确实到了右栏，而不是只看列表刷新了。
+12. **跨栏移动** —— 同上，用「移动」。确认来源已消失、目标存在且内容正确。
+13. **传输中取消** —— 复制一个大文件并按「取消」。结果必须显示「已取消」并报告复制了多少；
+    **不得**声称成功。
+14. **冲突处理** —— 往已有同名文件的目录复制。逐个试：「保留两者」（两个都在，新的叫
+    `name (1).ext`）、「覆盖」（目标变成来源内容）、「跳过」（目标未变）。
+15. **空间不足拒绝** —— 复制一个大于目标剩余空间的东西。必须**在写入任何字节之前**被拒绝，
+    并给出所需与可用的大小。
+16. **回收站** —— 选一个文件，按「移入回收站」，再从更多菜单打开「回收站」。
+    顶部显示条目数、总大小与回收站位置。
+17. **还原** —— 还原一项，确认它回到原路径。然后先在该路径新建一个文件，确认还原被**拒绝**
+    而不是覆盖。
+18. **永久删除与清理** —— 永久删除一项，再用「清空回收站 → 仅 7 天前」确认最近的项留了下来。
+19. **索引校准** —— 用另一个 shell 删掉回收站里的实体
+    （`adb shell rm -rf <回收站>/items/<id>`），在回收站里按刷新，确认那条过期记录被丢弃并报告。
+20. **搜索：当前目录** —— 打开一个目录，更多菜单 → 搜索，取消勾选「包含子目录」，搜一个已知
+    文件名的一部分。只允许匹配该目录下的文件，且顶部必须显示「仅此目录」。
+21. **搜索：递归** —— 勾上「包含子目录」再搜。子目录里的匹配必须出现，每行显示完整路径，
+    「定位」必须把当前栏跳到所在目录。
+22. **搜索过滤** —— 按扩展名与类别收窄，确认结果集与 `adb shell find <目录> -name '*.jpg'` 一致。
+23. **搜索取消** —— 在很大的目录（`/storage/emulated/0`，或带 root 的 `/data`）发起递归搜索
+    后按「停止」。状态必须显示「已停止」并报告扫描了多少条；已找到的结果必须保留。
+    用 `adb shell ps -A | grep find` 确认没有残留的 `find` 进程。
+24. **搜索：先无 root 再授权** —— 先搜 `/data`：应用必须报告读不了的位置（点提示查看），
+    而不是返回空结果。授权后再搜，确认这些路径可搜。
+25. **失控搜索保护** —— 清空所有输入后递归搜索，应用必须先要求确认再遍历整棵树。
 
-```bash
-adb install -r app/build/outputs/apk/debug/app-debug.apk
-adb shell am start -n io.rootexplorer.pro.debug/io.rootexplorer.pro.MainActivity
-```
+#### P2 手工验收（需要已 root 的设备）
 
-Note the debug build ID has a `.debug` suffix, so the component name and the FileProvider
-authority both carry it.
-
-### Recommended manual pass
-
-1. **Storage access** — a banner appears when "all files access" is missing; the button opens
-   the right Settings screen. Confirm `/storage/emulated/0` becomes browsable afterwards.
-2. **Real listing** — counts in the top bar match the directory contents. Compare against
-   `adb shell ls -a /storage/emulated/0 | wc -l`.
-3. **Sorting** — check each field in both directions. Entries with unknown size or date must
-   stay at the bottom in both directions.
-4. **Filtering** — apply a filter, confirm the "已过滤 N" counter and that clearing it restores
-   the list.
-5. **Hidden files** — toggle and watch the count change.
-6. **Selection** — long-press to enter selection mode, select all, invert, cancel.
-7. **Create / rename / delete** — create a folder, rename it, delete it. Each should report a
-   verified success, and refresh should reflect the disk.
-8. **Properties** — compare against `adb shell stat -c '%A %a %U %G' <path>`.
-9. **Permission editor** — verify the octal and symbolic strings agree with the checkboxes for
-   644, 755, 600, 777, 4755, 1775.
-10. **Root** — tap the drawer's authorize entry, approve the prompt, then open `/data/adb`.
-    Confirm the ROOT badge appears and the drawer status reads 已获得 Root.
-
-#### P1 manual pass
-
-11. **Cross-pane copy** — select a few files on the left, navigate the right pane to a
-    different directory, press 复制. Watch the task strip for the current file, byte count,
-    throughput and the cancel button. Confirm the files exist in the right pane afterwards by
-    re-reading the directory, not just by the list refreshing.
-12. **Cross-pane move** — the same, with 移动. Confirm the sources are gone and the
-    destinations are present with the expected contents.
-13. **Cancel mid-transfer** — copy something large and press 取消. The result must say 已取消
-    and report how much was copied; it must not claim success.
-14. **Conflict handling** — copy a file to a directory that already has one of the same name.
-    Try each choice: 保留两者 (both exist, the new one is `name (1).ext`), 覆盖 (destination now
-    has the source content), 跳过 (destination unchanged).
-15. **Free-space refusal** — try to copy something larger than the free space on the target.
-    It must be refused before any byte is written, with the required and available sizes.
-16. **Recycle bin** — select a file, press 移入回收站, then open 回收站 from the overflow menu.
-    The header shows the item count, the total size and the bin's storage location.
-17. **Restore** — restore an item and confirm it reappears at its original path. Then create a
-    new file at that path first and confirm the restore is *refused* rather than overwriting it.
-18. **Permanent delete and cleanup** — permanently delete one item, then use 清空回收站 with
-    仅 7 天前 and confirm recent items survive the purge.
-19. **Index reconciliation** — delete a trashed payload through another shell
-    (`adb shell rm -rf <trash>/items/<id>`), press refresh in the bin, and confirm the stale
-    record is dropped and reported.
-20. **Search, current directory** — open a directory, overflow menu then 搜索, untick
-    包含子目录, search for part of a known file name. Only files directly in that directory may
-    match, and the header must say 仅此目录.
-21. **Search, recursive** — tick 包含子目录 and search again. Matches from subdirectories must
-    appear, each row showing its full path, and 定位 must jump the active pane to the
-    containing directory.
-22. **Search filters** — narrow by extension and by category and confirm the result set matches
-    `adb shell find <dir> -name '*.jpg'`.
-23. **Search cancellation** — start a recursive search somewhere large (`/storage/emulated/0`
-    or `/data` with root) and press 停止. The status must say 已停止 and report how many entries
-    were scanned; results found so far must remain. Confirm with `adb shell ps -A | grep find`
-    that no `find` process is left behind.
-24. **Search without root, then with** — search `/data` before granting root: the app must
-    report the unreadable locations (tap the notice) rather than returning an empty result.
-    Grant root, search again, and confirm those paths become searchable.
-25. **Unbounded search guard** — clear all inputs and search recursively; the app must ask for
-    confirmation before walking the whole tree.
-
-#### P2 manual pass (requires a rooted device)
-
-26. **Root probe** — before granting, the drawer reads 未检测 or 未授权; after granting,
-    已获得 Root. Confirm the probe is *not* triggered by merely launching the app.
-27. **chmod on shared storage** — pick a file, 属性 then 权限, set 600, 确定. Compare against
-    `adb shell stat -c '%a' <path>` — they must match, and the result must say it was verified
-    by re-reading.
-28. **chmod on a system file** — try the same on `/system/build.prop`. Expect either a real
-    read-only error, or a successful change followed by a *verified* re-read. In neither case
-    may the app report success without the re-read agreeing, and it must not remount anything.
-29. **Sensitive-path confirmation** — changing anything under `/system`, `/vendor`, `/data/adb`
-    or `/metadata` must first show the risk dialog naming the consequence.
-30. **Special bits** — set `4755` on a copy of a binary and confirm the editor and the
-    properties dialog both show setuid. Then check that the app reports failure if the setuid
-    bit does not actually stick.
-31. **chown** — set owner `0` and group `0`, and separately try the names `root`. Both must be
-    accepted and verified. Then try a name that does not exist on the device: the dialog must
-    say it cannot be resolved rather than assuming root.
-32. **Recursive apply** — apply `chmod -R 700` to a directory with children and confirm every
-    child changed (`adb shell stat -c '%a' dir/*`).
-33. **Validation** — try a relative path and a name containing `;` or `$()`; both must be
-    refused before any command runs.
+26. **root 探测** —— 授权前侧边栏显示「未检测」，需要 root 的浏览被拒。**授权一次之后，
+    从最近任务里划掉应用再打开：ROOT 徽标和 root-only 路径必须自己回来，不需要再点一次授权** ——
+    因为授权被记住了，启动时会静默重探。然后在 root 管理器里撤销该应用并重新打开：
+    必须回落到「未授权」，且**不得**变成每次启动都弹框。
+27. **共享存储上的 chmod** —— 选一个文件，属性 → 权限，设为 600，确定。
+    与 `adb shell stat -c '%a' <路径>` 对照，必须一致，且结果必须写明是通过回读校验的。
+28. **系统文件上的 chmod** —— 对 `/system/build.prop` 做同样的事。期望要么是真实的只读错误，
+    要么是成功改动 + 一次**已验证**的回读。两种情况下都不允许在回读不吻合时报告成功，
+    也不允许 remount 任何东西。
+29. **敏感路径确认** —— 改动 `/system`、`/vendor`、`/data/adb`、`/metadata` 下的任何内容，
+    必须先弹出写明后果的风险对话框。
+30. **特殊位** —— 给一个二进制的副本设 `4755`，确认编辑器与属性对话框都显示 setuid。
+    再确认若 setuid 位实际没粘上，应用报告的是失败。
+31. **chown** —— 设属主 `0`、属组 `0`；再单独用名字 `root` 试一次。两者都必须被接受并校验。
+    然后试一个设备上不存在的名字：对话框必须说无法解析，而不是假定成 root。
+32. **递归应用** —— 对一个有子项的目录应用 `chmod -R 700`，确认每个子项都变了
+    （`adb shell stat -c '%a' 目录/*`）。
+33. **输入校验** —— 试一个相对路径和一个含 `;` 或 `$()` 的名字；两者都必须在任何命令执行前被拒绝。
+34. **批量操作（本次新增）** —— 在列表里从第 1 行向左滑到第 4 行，确认 1~4 全部选中、
+    底栏显示「已选 4 项」；中途把手指拖回第 2 行应缩小到 1~2。然后按「权限」给这 4 项设同一个权限，
+    确认逐项回读校验且汇总报告正确；按「删除」确认二次确认框里列出这些名字。
+35. **竖向滚动不得误触发** —— 在列表上竖着滑，必须只是滚动，**不能**选中任何东西。
+36. **看图与文本（本次新增）** —— 点一张图片应进入看图并能捏合放大；点 `txt`/`json` 应进编辑器；
+    点 `sh` 应弹出运行对话框（设置里可切系统/扩展包环境与 ROOT，执行后回显退出码与输出）。
 
 ---
 
-## 6. Known limitations (stated plainly)
+## 6. 已知限制（如实说明）
 
-**Root features are now partially device-verified.** A rooted Xiaomi 2211133C (Android 17 /
-API 37, KernelSU) was connected for the later part of the work, and this changed the picture in
-both directions.
+**root 相关功能已部分真机验证。** 开发后段接上了一台已 root 的小米 2211133C
+（Android 17 / API 37，KernelSU），这让结论在两个方向上都变了。
 
-Verified on that device:
+在该设备上验证过：
 
-- the `su` probe reaching KernelSU and returning a root shell (`uid=0(root)`, `context=u:r.ksu:s0`);
-- root directory listings of `/` and `/data`, including the fix for bug 6 above;
-- `ls -la` parsing against the device's verbatim output, pinned by
-  `RootListingIntegrationTest`, so the format is real rather than assumed;
-- `chmod` including every special bit: `4755` → `-rwsr-xr-x|4755`, `2755` → `-rwxr-sr-x|2755`,
-  `1755` → `-rwxr-xr-t|1755`, plus `-R` recursing over a directory tree. This also established
-  that `stat -c %a` returns **four** digits, which is what makes the setuid-safe verification
-  comparison valid rather than accidentally always-failing;
-- `chown` by name (`shell:shell` → uid/gid 2000) and by numeric id (`0:0` → root), and that a bad
-  name fails loudly (`chown: bad user '…'`, exit 1) leaving ownership unchanged;
-- that a read-only partition fails with `Read-only file system`, exit 1, and leaves the mode
-  unchanged — the exact case where trusting an exit code instead of re-reading would lie;
-- the terminal's command framing: `printf` reporting `$?` correctly (`0` and `1` both observed),
-  multi-line output framed by a single status line, and `cd` persisting across frames within one
-  root session;
-- that the app's own UID is correctly denied where root is required (root escaping no permission
-  check is not the same as the app never being denied);
-- install, launch and sustained running with no crash across many rebuilds.
+- `su` 探测到达 KernelSU 并返回真实 root shell（`uid=0(root)`、`context=u:r.ksu:s0`）；
+- `/` 与 `/data` 的 root 目录列表，含上面第 6 个 bug 的修复；
+- 针对设备原始输出解析 `ls -la`，由 `RootListingIntegrationTest` 钉住 —— 格式是实测的，不是假设的；
+- `chmod` 覆盖每个特殊位：`4755` → `-rwsr-xr-x|4755`、`2755` → `-rwxr-sr-x|2755`、
+  `1755` → `-rwxr-xr-t|1755`，以及 `-R` 对整棵目录树递归。这也确认了 `stat -c %a` 返回**四位**，
+  正是这一点让"不会误判 setuid"的校验比较成立，而不是碰巧永远失败；
+- `chown` 按名字（`shell:shell` → uid/gid 2000）与按数字 id（`0:0` → root），
+  以及错误名字会**大声失败**（`chown: bad user '…'`，退出 1）且属主不变；
+- 只读分区会以 `Read-only file system`、退出 1 失败且模式不变 ——
+  这正是"信退出码而不回读就会撒谎"的那个场景；
+- 终端的命令分帧：`printf` 正确报告 `$?`（实测到 `0` 与 `1`）、多行输出由单条状态行分帧、
+  `cd` 在同一个 root 会话内跨帧保持；
+- 应用自身 uid 在需要 root 的地方确实被拒（"root 能绕过权限检查"不等于"应用从未被拒"）；
+- **root 授权能挺过应用被杀**（2026-10-12 实测）：在侧边栏授权一次，然后 `am force-stop`
+  让 pid 消失，再启动 —— **不点任何按钮**，`ROOT` 徽标在两个栏都自己回来，可重复验证，
+  同时 `root_granted` 留在 `SharedPreferences` 里。这就是冷启动不再重复索要授权的原因；
+- 多次重建后安装、启动与持续运行均无崩溃。
 
-Still **not** verified on hardware, and honestly unknown:
+仍然**未在真机验证**，且诚实地说仍是未知：
 
-- the permission editor's **UI** wiring: the rules, the octal form and the command construction are
-  now pinned to device-measured values, but no one has tapped the checkboxes;
-- uid/gid **name** resolution beyond `root`/`shell` (`id -nu 0` and `id -u shell` both verified);
-- the copy/move progress UI, conflict prompts and task strip;
-- the recycle-bin screens (move, restore, permanent delete) and the index against a real volume;
-- hashing dialogs, archive compress/extract dialogs, and the text editor's save path;
-- the installed-apps screen and APK export;
-- the behaviour of a **different ROM** — most of the failures above were this ROM's toybox
-  quirks, and a busybox device may behave differently again.
+- 权限编辑器的**界面**接线：规则、八进制形式与命令构造现在都钉在真机实测值上，
+  但**没有人点过那些勾选框**；
+- `root`/`shell` 之外的 uid/gid **名字**解析（`id -nu 0` 与 `id -u shell` 都已验证）；
+- 复制/移动的进度界面、冲突提示与任务条；
+- 回收站各界面（移入、还原、永久删除）以及索引在真实存储卷上的表现；
+- 哈希对话框、压缩包压缩/解压对话框、文本编辑器的保存路径；
+- 已安装应用界面与 APK 导出；
+- **左滑选中、批量删除/改权限、看图、脚本运行对话框的手感与交互**（本次新增，均未点过）；
+- **另一个 ROM 的行为** —— 上面多数失败都是这个 ROM 的 toybox 特性，busybox 设备可能又是另一套。
 
-The *rules* those paths implement are covered by 304 unit tests, but those tests stop at the shell
-boundary: they assert decision logic, validation and command construction, not what a particular
-ROM's tools do. §5 records exactly which assumptions the device falsified.
+上述路径所实现的**规则**由 355 个单元测试覆盖，但这些测试止步于 shell 边界：
+它们断言的是决策逻辑、输入校验与命令构造，而不是某个具体 ROM 的工具行为。
+§5 逐条记录了设备推翻了哪些假设。
 
-Everything else (compilation, 304 unit tests, APK production, the non-root browsing path, the
-whole copy/move engine against a real filesystem, the recycle-bin index, and the search rules)
-was verified on the build machine.
+其余部分（编译、355 个单元测试、产出 APK、无 root 的浏览路径、整套复制/移动引擎对真实文件系统、
+回收站索引、搜索规则）都在构建机上验证过。
 
-**Not yet implemented.** Nothing below is silently faked: each entry is either disabled in the
-UI with a visible reason, or returns an explicit message.
+**尚未实现的功能。** 下面没有一项是悄悄造假的：要么在界面上置灰并标注原因，要么返回明确消息。
 
-| Missing | Entry point behaviour | Planned |
+| 缺失项 | 入口表现 | 计划 |
 |---|---|---|
-| Open-with / share via Intent + FileProvider | Menu entries disabled, labelled P3 | P3 |
-| Settings screen | Overflow entry disabled, labelled P4 | P4 |
-| Plugin management, remote management, MCP, Activity log | Drawer entries disabled, labelled | Out of scope for this brief |
+| 用 Intent + FileProvider 分享给其它应用 | 菜单项置灰，标注待实现 | 待定 |
+| 压缩包内的浏览与增删 | 单击压缩包提示"尚未实现，可长按先解压" | 下一步 |
+| 设置界面 | 更多菜单项置灰，标注 P4 | P4 |
+| 插件管理、远程管理、MCP、操作日志 | 侧边栏条目置灰并标注 | 超出本项目范围 |
 
-**Other limitations**
+**其它限制**
 
-- Search covers names, extensions and categories. It does **not** search file *contents*,
-  which would need a different engine (and, for anything large, an index).
-- A recursive search runs as a single foreground operation with no queue: starting a new search
-  cancels the previous one. Running two at once would make the progress figures meaningless.
-- The root search walks with `ls`, one `su` invocation per directory, because this device's
-  toybox `find` rejects `-exec`/`-printf`/`-mindepth` (see §5, bug 7). Correct on every device,
-  but slower than a single `find` would be on a tree with many directories; the walk stops at
-  2000 directories and reports the result as incomplete rather than pretending it finished.
-- Copy/move runs one task at a time on purpose. Concurrent transfers against the same storage
-  would make the reported throughput and partial-failure accounting meaningless; a queue is the
-  right way to add concurrency, and it is not there yet.
-- Moving across filesystems (for example from internal storage to a removable SD card) is a
-  copy followed by deleting the source. It is real and verified, but it is not atomic: a power
-  loss mid-move leaves the copy in place and the source untouched, which is the safe direction.
-- The transfer engine reuses the app's own credentials when it can, and only falls back to the
-  root shell to delete a source it cannot remove itself. A copy *from* a root-only path into
-  ordinary storage is therefore not accelerated through `su`.
-- `chmod`/`chown` run one `su` invocation per operation. There is no persistent root shell
-  session, so a recursive change over a huge tree is slower than it could be.
-- The permission editor has no "apply to selection" action yet: a change applies to the one
-  entry it was opened from (plus its children when recursive is ticked).
-- Settings use `SharedPreferences`. The brief allows DataStore or Room; migrating is listed as
-  P4 work. The recycle-bin index is a flat file rather than a database.
-- UI strings are inline Chinese in Kotlin rather than in `strings.xml`. Externalising them is
-  P4 accessibility/localisation work.
-- `AndroidManifest.xml` requests `QUERY_ALL_PACKAGES`, which the "installed apps" tool (P3)
-  will need. It is unused for now and should be removed if that tool is dropped.
-- Sorting by name is case-insensitive but not locale-aware, so it is not a full collator.
-- Very large directories (tens of thousands of entries) are read in one pass; the per-entry
-  POSIX attribute read makes the first load of such a directory slow. Paging or a coarser
-  first pass is P4 performance work.
-- No UI/instrumentation tests yet. The brief asks for them; the core logic is covered by unit
-  tests, but Compose tests are outstanding.
+- 搜索覆盖名称、扩展名与类别，**不搜索文件内容** —— 那需要另一套引擎（而且对大的东西需要索引）。
+- 递归搜索是单次前台操作，没有队列：发起新搜索会取消上一次。
+  同时跑两个会让进度数字失去意义。
+- root 搜索用 `ls` 逐目录遍历，每个目录一次 `su`，因为这台设备的 toybox `find` 拒绝
+  `-exec`/`-printf`/`-mindepth`（见 §5 第 7 个 bug）。这在任何设备上都正确，
+  但在目录很多的树上会比单次 `find` 慢；遍历在 2000 个目录处停止，并把结果标记为不完整，
+  而不是假装跑完了。
+- 复制/移动**故意**一次只跑一个任务。对同一存储并发传输会让报告的速率和部分失败账目失去意义；
+  要加并发，正确的做法是加队列，而现在还没有。
+- 跨文件系统移动（比如从内置存储到可插拔 SD 卡）是"先复制再删来源"。这是真实且验证过的，
+  但**不是原子操作**：移动中途断电会留下副本、来源不动 —— 这是安全的方向。
+- 传输引擎能用自己的凭据就用，只有在删不掉来源时才回退到 root shell。
+  因此从 root-only 路径**复制出来**并不会走 `su` 加速。
+- `chmod`/`chown` 每次操作一次 `su`。没有常驻的 root shell 会话，
+  所以对巨大目录树的递归改动比理论上要慢。
+- 权限编辑器现在有批量入口（选择态底栏「权限」），但**所有者/用户组仍是单项**：
+  它要按名字查设备账号库并逐项回读校验，批量只是把同一个查询重复 N 次，没有收益。
+- 设置用 `SharedPreferences`。需求允许 DataStore 或 Room，迁移被列为 P4 工作。
+  回收站索引是扁平文件而不是数据库。
+- 界面文案是内联在 Kotlin 里的中文，没有放进 `strings.xml`。外置化属于 P4 的可访问性/本地化工作。
+  （例外：应用名 `app_name` 已进 `strings.xml`，因为列表、关于页与启动器都必须读同一处。）
+- `AndroidManifest.xml` 申请了 `QUERY_ALL_PACKAGES`，这是"已安装应用"工具需要的。
+  目前它已被使用（P3 已实现），但如果哪天去掉该工具，这个权限也应一并去掉。
+- 按名称排序不区分大小写，但**不支持语言区域**，所以它不是完整的排序器。
+- 超大目录（几万条）是一次性读取的；每条目一次 POSIX 属性读取让这类目录的首次加载偏慢。
+  分页或更粗的第一遍扫描属于 P4 性能工作。
+- 目前没有 UI/仪器测试。需求要求有，核心逻辑已由单元测试覆盖，但 Compose 测试还欠着。
 
 ---
 
-## 7. Environment notes for this checkout
+## 7. 本仓库的环境说明
 
-- The SDK directory on the development machine is **not writable** by the build, so
-  `buildToolsVersion` is pinned to the installed `36.0.0` instead of letting AGP install the
-  version it defaults to.
-- Gradle's user home, its temp directory and the Android user home are redirected into the
-  project (`.gradle-home/`, `.gradle-tmp/`, `.android-home/`) because the sandbox temporary
-  directory prevented Gradle's native library from loading. These directories are
-  git-ignored and are not part of the project.
-- `tools/` contains small Node.js scripts used to bootstrap the toolchain on this machine
-  (a downloader that works where `Invoke-WebRequest` TLS does not, a mirror speed test, and a
-  version query). They are development aids, not part of the app.
+- 开发机上 **SDK 目录对构建不可写**，所以 `buildToolsVersion` 明确钉在已安装的 `36.0.0`，
+  而不是让 AGP 去装它默认的版本。
+- Gradle 的用户目录、临时目录与 Android 用户目录都被重定向进项目内
+  （`.gradle-home/`、`.gradle-tmp/`、`.android-home/`），因为沙箱的临时目录会让
+  Gradle 的原生库加载失败。这些目录都被 git 忽略，不属于项目内容。
+- **本机的 aapt2 绕过**：Gradle 缓存里那份 Maven 版 aapt2
+  （`.gradle-home/caches/<gradle>/transforms/<hash>/transformed/aapt2-<agp>-windows/aapt2.exe`）
+  **无法渲染自己的诊断消息**。它一旦需要报错就输出
+  `AAPT: error: failed to load XML file: Error 15100 while retrieving message for error 13.` ——
+  这句话点名的是构建自己刚写出的 `AndroidManifest.xml`，所以看起来像 manifest 损坏，
+  **实际上真正的错误被它吃掉了**。`gradle.properties` 里的 `android.aapt2FromMavenOverride`
+  指向 SDK 自带的 aapt2（同为 2.20），错误立即可读、构建恢复正常。
+  **换到 aapt2 正常的机器上可以删掉这一行。**
+- `tools/` 里是几段 Node.js 小脚本，用于在这台机器上引导工具链
+  （一个在 `Invoke-WebRequest` 因 TLS 失败时仍能用的下载器、一个镜像测速、一个版本查询）。
+  它们是开发辅助，不属于应用。
+
+---
+
+构建：AGP 9.4.1 · Gradle 9.8.1 · Kotlin 2.4.21 · Compose BOM 2026.09.00 · compileSdk 37
+
+
